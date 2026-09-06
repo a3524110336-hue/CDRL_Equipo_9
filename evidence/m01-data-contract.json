@@ -7,15 +7,18 @@
     "make run"
   ],
   "results": {
-    "starterBase": "pending_team_execution"
+    "stack": "Python 3.12 + FastAPI + PostgreSQL 16 (ver docs/ADR-001-stack-tecnologico.md)",
+    "schema": "equipos y lecturas — ver db/migrations/0001_equipos.sql y 0002_lecturas.sql",
+    "api": "POST /lecturas/validar y POST /lecturas — ver docs/API-lecturas.md",
+    "tests": "1 caso normal, 2 casos límite, 1 fallo declarado, contra la API real en Docker — ver tests/test_api.py"
   },
   "assumptions": [
-    "El equipo elegirá y documentará el lenguaje de la aplicación.",
-    "AWS Academy Learner Lab se usará solo si el servicio está habilitado.",
-    "Los datos iniciales serán sintéticos."
+    "El equipo eligió Python + FastAPI + PostgreSQL, documentado en docs/ADR-001-stack-tecnologico.md.",
+    "AWS Academy Learner Lab se usará solo si el servicio está habilitado; el respaldo es Docker Compose.",
+    "Los datos iniciales (seed) son sintéticos, no provienen de sensores reales."
   ],
   "limitations": [
-    "La base inicial no es una implementación completa de M01.",
-    "La imagen local de DynamoDB debe fijarse y reportarse cuando el equipo la use."
+    "La imagen local de DynamoDB no se usa activamente en M01; queda declarada por si un hito posterior la requiere.",
+    "scripts/apply_migrations.sh depende de que el CLI de Docker esté disponible en el runner (cumplido en GitHub Actions ubuntu-latest)."
   ]
 }

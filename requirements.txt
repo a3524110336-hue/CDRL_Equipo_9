@@ -3,3 +3,5 @@ pydantic==2.13.5
 psycopg[binary]==3.3.5
 python-dotenv==1.2.3
 uvicorn==0.52.4
+pytest>=8,<9
+requests>=2,<3
