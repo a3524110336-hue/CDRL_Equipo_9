@@ -1,0 +1,21 @@
+{
+  "assignmentId": "m01-data-contract",
+  "commitSha": "REPLACE_AT_SUBMISSION",
+  "commands": [
+    "make setup",
+    "make verify",
+    "make run"
+  ],
+  "results": {
+    "starterBase": "pending_team_execution"
+  },
+  "assumptions": [
+    "El equipo elegirá y documentará el lenguaje de la aplicación.",
+    "AWS Academy Learner Lab se usará solo si el servicio está habilitado.",
+    "Los datos iniciales serán sintéticos."
+  ],
+  "limitations": [
+    "La base inicial no es una implementación completa de M01.",
+    "La imagen local de DynamoDB debe fijarse y reportarse cuando el equipo la use."
+  ]
+}
