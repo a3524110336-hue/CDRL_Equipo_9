@@ -1,6 +1,7 @@
 {
   "assignmentId": "m01-data-contract",
-  "commitSha": "f176ef8e99ceb2fc87e5ec6e208977106173eaac",
+  "commitSha": "fc52032bf5fb98187ae1b0a97f630c6fb70a9245",
+  "tag": "week-01-final",
   "commands": [
     "make setup",
     "make verify",
@@ -19,6 +20,7 @@
   ],
   "limitations": [
     "La imagen local de DynamoDB no se usa activamente en M01; queda declarada por si un hito posterior la requiere.",
-    "scripts/apply_migrations.sh depende de que el CLI de Docker esté disponible en el runner (cumplido en GitHub Actions ubuntu-latest)."
+    "scripts/apply_migrations.sh depende de que el CLI de Docker esté disponible en el runner (cumplido en GitHub Actions ubuntu-latest).",
+    "commitSha nombra el commit verificado en verde por GitHub Actions, cuyo reporte de make verify se entrega. No puede ser el SHA del commit que contiene este fichero: un commit no puede contener su propio hash, porque el hash se calcula sobre el contenido. El SHA exacto de la entrega es el que resuelve el tag week-01-final."
   ]
 }
