@@ -1,6 +1,6 @@
 {
   "assignmentId": "m01-data-contract",
-  "commitSha": "REPLACE_AT_SUBMISSION",
+  "commitSha": "f176ef8e99ceb2fc87e5ec6e208977106173eaac",
   "commands": [
     "make setup",
     "make verify",
