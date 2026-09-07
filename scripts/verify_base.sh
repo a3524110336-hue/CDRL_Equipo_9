@@ -85,6 +85,6 @@ summary = {
 Path("artifacts/base-verify.json").write_text(json.dumps(summary, indent=2) + "\n")
 PY
 
-docker compose down
+docker compose down -v
 
 echo "CDRL M01 verification passed"
