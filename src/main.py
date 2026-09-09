@@ -1,16 +1,27 @@
-"""Endpoints de validación y persistencia de lecturas."""
+"""Endpoints de validación, persistencia y consulta de lecturas."""
 
-from fastapi import FastAPI, Request, status
+from typing import Annotated
+
+from fastapi import FastAPI, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from src import database
-from src.schemas import ErrorSalida, LecturaEntrada, LecturaSalida, ValidacionSalida
+from src import database, queries
+from src.schemas import (
+    ConsultaLecturas,
+    ConsultaResumen,
+    ErrorSalida,
+    LecturaEntrada,
+    LecturaFueraUmbralSalida,
+    LecturaSalida,
+    ResumenMetricaSalida,
+    ValidacionSalida,
+)
 
 app = FastAPI(
     title="CDRL — API de lecturas",
-    version="0.1.0",
-    description="API de validación y persistencia de lecturas. Autor: Marco Antonio Osorio Hernandez.",
+    version="0.2.0",
+    description="API de validación, persistencia y consulta de lecturas. Autor: Marco Antonio Osorio Hernandez.",
 )
 
 
@@ -64,3 +75,34 @@ def validar(lectura: LecturaEntrada):
 def guardar(lectura: LecturaEntrada):
     """Valida y guarda una lectura en una transacción; no requiere validar antes."""
     return database.guardar_lectura(lectura)
+
+
+ERRORES_CONSULTA = {
+    422: {"model": ErrorSalida, "description": "Parámetros inválidos o equipo inexistente."},
+    503: {"model": ErrorSalida, "description": "Conexión con PostgreSQL no disponible."},
+}
+
+
+@app.get("/lecturas", response_model=list[LecturaSalida], responses=ERRORES_CONSULTA)
+def consultar_lecturas(filtros: Annotated[ConsultaLecturas, Query()]):
+    """Últimas N lecturas del equipo, ordenadas por instante e id descendentes."""
+    return queries.ultimas_lecturas(filtros)
+
+
+@app.get("/lecturas/resumen", response_model=list[ResumenMetricaSalida], responses=ERRORES_CONSULTA)
+def consultar_resumen(filtros: Annotated[ConsultaResumen, Query()]):
+    """Resumen por métrica en el rango inclusivo; límite aplicado a los grupos."""
+    return queries.resumen_por_metrica(filtros)
+
+
+@app.get(
+    "/lecturas/fuera-de-umbral",
+    response_model=list[LecturaFueraUmbralSalida],
+    responses={
+        **ERRORES_CONSULTA,
+        503: {"model": ErrorSalida, "description": "Conexión o esquema de umbrales M02 no disponible."},
+    },
+)
+def consultar_fuera_de_umbral(filtros: Annotated[ConsultaLecturas, Query()]):
+    """Lecturas fuera del intervalo permitido por el umbral actual de su métrica."""
+    return queries.lecturas_fuera_de_umbral(filtros)
