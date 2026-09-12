@@ -173,6 +173,8 @@ curl --get 'http://localhost:8001/lecturas/fuera-de-umbral' \
 
 **Dependencia de integración pendiente:** al sincronizar el repositorio en `c117ba2`, todavía no estaban publicadas las migraciones M02 de Jonathan. Esta consulta utiliza el contrato provisional `umbrales(metrica, minimo, maximo)`: un umbral global por métrica (`metrica UNIQUE`), extremos numéricos finitos no nulos y `minimo <= maximo`. Jonathan debe confirmar los nombres y restricciones con sus migraciones 0003/0004 y su seed. Si cambian, hay que adaptar la consulta antes de declarar integrada la entrega. La API no crea tablas ni aplica migraciones.
 
+**Dependencia resuelta (2026-09-12):** las migraciones `0003_umbrales.sql` y `0004_alertas.sql` implementan el contrato provisional sin cambios de nombre ni de restricciones, así que esta consulta quedó integrada **sin modificar `src/queries.py`**. El razonamiento y las alternativas descartadas están en `docs/ADR-002-umbrales-y-alertas.md`. Dos precisiones que conviene leer desde aquí: `disco_libre` no tiene umbral registrado a propósito —es el caso «métrica sin umbral» que esta página describe—, y las violaciones se registran en la tabla `alertas`, que puebla `db/dml/0001_reconciliar_alertas.sql`, no esta consulta.
+
 Si faltan la tabla de umbrales o las columnas que necesita esta consulta, responde 503 con `detail.codigo = "modelo_no_disponible"`. Si el esquema existe y no hay violaciones, responde 200 con `[]`. Una falla de conexión conserva 503 con `base_no_disponible`.
 
 ### Consultar desde PowerShell
