@@ -1,6 +1,6 @@
 {
   "assignmentId": "m02-relational-model",
-  "commitSha": "REPLACE_AT_SUBMISSION",
+  "commitSha": "34ed6f2577453cf1ad7e3f029d568345c7c8d53b",
   "tag": "week-02-final",
   "commands": [
     "make setup",
