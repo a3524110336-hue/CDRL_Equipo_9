@@ -1,0 +1,9 @@
+{
+  "status": "m02_relational_model_valid",
+  "scope": "schema_constraints_queries_and_tests",
+  "tests": {
+    "total": 9,
+    "failures": 0,
+    "errors": 0
+  }
+}
