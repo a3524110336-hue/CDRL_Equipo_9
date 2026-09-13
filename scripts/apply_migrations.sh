@@ -22,4 +22,11 @@ aplicar "Aplicando migraciones..." db/migrations
 aplicar "Aplicando seed..."        db/seed
 aplicar "Aplicando DML..."         db/dml
 
-echo "Migraciones, seed y DML aplicados."
+# Segunda pasada: es la prueba de la idempotencia que declara ADR-002. Si alguna
+# migración o seed no fuera reaplicable, ON_ERROR_STOP=1 aborta aquí; y el DML
+# convergente debe reportar 0 filas afectadas en esta pasada.
+aplicar "Reaplicando migraciones (prueba de idempotencia)..." db/migrations
+aplicar "Reaplicando seed (prueba de idempotencia)..."        db/seed
+aplicar "Reaplicando DML (prueba de convergencia)..."         db/dml
+
+echo "Migraciones, seed y DML aplicados dos veces: idempotencia verificada."
