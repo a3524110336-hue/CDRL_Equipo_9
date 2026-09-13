@@ -1,6 +1,6 @@
 {
   "assignmentId": "m02-relational-model",
-  "commitSha": "34ed6f2577453cf1ad7e3f029d568345c7c8d53b",
+  "commitSha": "9fdedcaf600dd375b61a020040a35c9380c423cd",
   "tag": "week-02-final",
   "commands": [
     "make setup",
