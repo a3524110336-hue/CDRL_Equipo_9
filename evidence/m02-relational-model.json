@@ -1,0 +1,26 @@
+{
+  "assignmentId": "m02-relational-model",
+  "commitSha": "REPLACE_AT_SUBMISSION",
+  "tag": "week-02-final",
+  "commands": [
+    "make setup",
+    "make verify",
+    "make run"
+  ],
+  "results": {
+    "schema": "umbrales y alertas — ver db/migrations/0003_umbrales.sql y 0004_alertas.sql (docs/ADR-002-umbrales-y-alertas.md)",
+    "dml": "db/dml/0001_reconciliar_alertas.sql — convergente, la segunda corrida afecta 0 filas",
+    "constraints": "15 restricciones verificadas por scripts/check_constraints.sql (dominios cerrados, rangos, coherencia de cierre, duplicados)",
+    "queries": "GET /lecturas, /lecturas/resumen, /lecturas/fuera-de-umbral — consultas parametrizadas en src/queries.py",
+    "tests": "caso normal, caso vacío, dos casos límite y un fallo declarado — ver tests/test_queries.py y artifacts/base-verify.json"
+  },
+  "assumptions": [
+    "El umbral es global por métrica, no por equipo (documentado en ADR-002).",
+    "disco_libre queda sin umbral a propósito: el seed lo mide en bytes absolutos y el modelo no guarda la capacidad total de cada equipo.",
+    "AWS Academy Learner Lab se usará solo si el servicio está habilitado; el respaldo es Docker Compose."
+  ],
+  "limitations": [
+    "commitSha nombra el commit verificado en verde por GitHub Actions, cuyo reporte de make verify se entrega. El SHA exacto de la entrega es el que resuelve el tag week-02-final.",
+    "scripts/check_constraints.sql requiere que ya existan al menos una lectura y un umbral (aplicados por scripts/apply_migrations.sh antes de correr este script)."
+  ]
+}

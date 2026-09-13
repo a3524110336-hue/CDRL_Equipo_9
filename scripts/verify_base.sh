@@ -7,6 +7,7 @@ required_files=(
   "docker-compose.yml"
   "docs/ADR-000-starter-base.md"
   "evidence/m01-data-contract.json"
+  "evidence/m02-relational-model.json"
   ".github/workflows/cdrl-feedback.yml"
 )
 
@@ -22,7 +23,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-payload = json.loads(Path("evidence/m01-data-contract.json").read_text())
+payload = json.loads(Path("evidence/m02-relational-model.json").read_text())
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
 missing = sorted(required.difference(payload))
 if missing:
@@ -45,6 +46,10 @@ for i in $(seq 1 30); do
 done
 
 bash scripts/apply_migrations.sh
+
+echo "Verificando que las restricciones rechacen datos invalidos..."
+docker compose exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f - < scripts/check_constraints.sql
 
 echo "Levantando la API..."
 docker compose up -d --build app
@@ -74,8 +79,8 @@ root = tree.getroot()
 suite = root.find("testsuite") if root.tag != "testsuite" else root
 
 summary = {
-    "status": "m01_data_contract_valid",
-    "scope": "api_contract_and_tests",
+    "status": "m02_relational_model_valid",
+    "scope": "schema_constraints_queries_and_tests",
     "tests": {
         "total": int(suite.get("tests", 0)),
         "failures": int(suite.get("failures", 0)),
@@ -87,4 +92,4 @@ PY
 
 docker compose down -v
 
-echo "CDRL M01 verification passed"
+echo "CDRL M02 verification passed"

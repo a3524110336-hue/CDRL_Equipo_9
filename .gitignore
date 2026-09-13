@@ -3,9 +3,6 @@
 node_modules/
 __pycache__/
 .pytest_cache/
-artifacts/*.json
-artifacts/*.xml
-artifacts/*.log
 evidence/*-local.json
 db/data/
 docker-data/
