@@ -9,7 +9,6 @@ import psycopg
 from src import database
 from src.schemas import ConsultaLecturas, ConsultaResumen
 
-
 ULTIMAS_LECTURAS = """
     SELECT l.id, l.equipo_id, l.metrica, l.unidad, l.valor,
            l.medido_en, l.registrado_en
@@ -64,13 +63,13 @@ def _parametros_lecturas(equipo_id: int, filtros: ConsultaLecturas) -> tuple:
 
 
 def ultimas_lecturas(filtros: ConsultaLecturas) -> list[dict]:
-    with database.conexion() as conn:
+    with database.conexion("reader") as conn:
         equipo_id = database.buscar_equipo(conn, filtros.equipo)
         return conn.execute(ULTIMAS_LECTURAS, _parametros_lecturas(equipo_id, filtros)).fetchall()
 
 
 def resumen_por_metrica(filtros: ConsultaResumen) -> list[dict]:
-    with database.conexion() as conn:
+    with database.conexion("reader") as conn:
         equipo_id = database.buscar_equipo(conn, filtros.equipo)
         return conn.execute(
             RESUMEN_POR_METRICA,
@@ -80,7 +79,7 @@ def resumen_por_metrica(filtros: ConsultaResumen) -> list[dict]:
 
 def lecturas_fuera_de_umbral(filtros: ConsultaLecturas) -> list[dict]:
     try:
-        with database.conexion() as conn:
+        with database.conexion("reader") as conn:
             equipo_id = database.buscar_equipo(conn, filtros.equipo)
             return conn.execute(
                 LECTURAS_FUERA_DE_UMBRAL, _parametros_lecturas(equipo_id, filtros)

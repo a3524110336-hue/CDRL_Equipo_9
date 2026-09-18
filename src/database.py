@@ -1,8 +1,9 @@
-"""Consultas parametrizadas sobre las migraciones de Persona 1."""
+"""Conexiones de mínimo privilegio y consultas parametrizadas de lecturas."""
 
 import os
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 import psycopg
 from dotenv import load_dotenv
@@ -11,6 +12,11 @@ from psycopg.rows import dict_row
 from src.schemas import LecturaEntrada
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+_ROLES_APLICACION = {
+    "reader": ("cdrl_reader", "CDRL_READER_PASSWORD"),
+    "writer": ("cdrl_writer", "CDRL_WRITER_PASSWORD"),
+}
 
 
 class ErrorLectura(Exception):
@@ -32,14 +38,27 @@ def lectura_duplicada():
 
 
 @contextmanager
-def conexion():
+def conexion(rol: Literal["reader", "writer"]):
+    # La ruta elige un rol fijo; ni el cliente ni POSTGRES_USER lo pueden elevar.
+    if rol not in _ROLES_APLICACION:
+        raise ValueError("Rol de aplicación no permitido.")
+    usuario, variable_password = _ROLES_APLICACION[rol]
+    password = os.getenv(variable_password)
+    if not password:
+        # Evita recurrir al administrador, a .pgpass o a autenticación sin clave.
+        raise ErrorLectura(
+            503,
+            "configuracion_no_disponible",
+            "La configuración de acceso a la base de datos no está disponible.",
+        )
+
     try:
         with psycopg.connect(
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=os.getenv("POSTGRES_PORT", "5432"),
             dbname=os.getenv("POSTGRES_DB", "cdrl"),
-            user=os.getenv("POSTGRES_USER", "cdrl_dev"),
-            password=os.getenv("POSTGRES_PASSWORD", "cdrl_dev_only"),
+            user=usuario,
+            password=password,
             connect_timeout=3,
             row_factory=dict_row,
         ) as conn:
@@ -68,7 +87,7 @@ def buscar_equipo(conn, codigo: str) -> int:
 
 
 def validar_lectura(lectura: LecturaEntrada) -> int:
-    with conexion() as conn:
+    with conexion("reader") as conn:
         equipo_id = buscar_equipo(conn, lectura.equipo_codigo)
         duplicado = conn.execute(
             """SELECT id FROM lecturas
@@ -81,7 +100,7 @@ def validar_lectura(lectura: LecturaEntrada) -> int:
 
 
 def guardar_lectura(lectura: LecturaEntrada) -> dict:
-    with conexion() as conn:
+    with conexion("writer") as conn:
         equipo_id = buscar_equipo(conn, lectura.equipo_codigo)
         guardada = conn.execute(
             """INSERT INTO lecturas (equipo_id, metrica, unidad, valor, medido_en)

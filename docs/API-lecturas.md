@@ -8,7 +8,9 @@ Una lectura contiene `equipo_codigo`, `metrica`, `unidad`, `valor` y `medido_en`
 
 ## Arranque local con Python
 
-Requiere Python 3.11 o posterior y un PostgreSQL con las migraciones y el seed de Jonathan aplicados. La configuración usa las variables `POSTGRES_*` de `.env.example`; puedes copiarlo a `.env`. Las variables del entorno tienen prioridad sobre `.env`.
+Requiere Python 3.11 o posterior y un PostgreSQL con las migraciones y el seed de Jonathan aplicados, incluida `0005_roles_privilegios.sql`. La API localiza la base con `POSTGRES_HOST`, `POSTGRES_PORT` y `POSTGRES_DB`, y se autentica con `CDRL_READER_PASSWORD` o `CDRL_WRITER_PASSWORD` según la operación. Puedes copiar `.env.example` a `.env` y completar las claves; las variables del entorno tienen prioridad sobre `.env`, incluso cuando están vacías. Asigna primero las contraseñas a los roles mediante el procedimiento de [SECRETS.md](SECRETS.md): crear los roles no basta para habilitar su autenticación.
+
+`POST /lecturas` usa `cdrl_writer`; los tres GET y `POST /lecturas/validar`, que no guarda datos, usan `cdrl_reader`. Los nombres de usuario son fijos y la API no utiliza las credenciales administrativas `POSTGRES_USER` y `POSTGRES_PASSWORD` como alternativa. Las credenciales migrator y ops pertenecen a sus herramientas responsables.
 
 PowerShell, desde la carpeta del repositorio:
 
@@ -86,6 +88,7 @@ Todos los errores de contrato usan esta estructura; los errores de campos tambi�
 | Lectura, JSON o parámetros de consulta inválidos | 422 | lectura_invalida |
 | Equipo inexistente | 422 | equipo_inexistente |
 | Mismo equipo, métrica e instante | 409 | lectura_duplicada |
+| Contraseña ausente o vacía para el rol de la operación | 503 | configuracion_no_disponible |
 | Conexión no disponible o interrumpida | 503 | base_no_disponible |
 | Tabla o columnas de umbrales no disponibles para consultar violaciones | 503 | modelo_no_disponible |
 
@@ -205,9 +208,11 @@ Los modelos de parámetros concentran tipos, rangos y rechazo de campos adiciona
 
 ## Integración para Alejandro
 
-El punto de entrada es `src.main:app` y las dependencias de ejecución están en `requirements.txt`. La API lee `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `POSTGRES_USER` y `POSTGRES_PASSWORD` de las variables del entorno o del `.env` local existente; la conexión tiene un timeout de tres segundos.
+El punto de entrada es `src.main:app` y las dependencias de ejecución están en `requirements.txt`. La API lee `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DB`, `CDRL_READER_PASSWORD` y `CDRL_WRITER_PASSWORD` de las variables del entorno o del `.env` local existente; la conexión tiene un timeout de tres segundos. Cada operación pide explícitamente reader o writer, sin conexión administrativa de respaldo. Si falta la contraseña correspondiente, devuelve 503 `configuracion_no_disponible` con un mensaje genérico; una contraseña incorrecta o una conexión fallida conserva 503 `base_no_disponible`.
 
 Para ejecutarla dentro de un contenedor, el comando es `python -m uvicorn src.main:app --host 0.0.0.0 --port 8001`. Alejandro integra este comando con Docker, `make setup/verify/run`, sus pruebas y el pipeline. Jonathan proporciona las migraciones y el seed; la API no los ejecuta al arrancar.
+
+**Integración de M03 pendiente en el entorno:** el Compose recibido todavía no pasa las contraseñas de reader y writer a `app`. [SECRETS.md](SECRETS.md) contiene el bloque `environment` exacto para ese servicio y los pasos de asignación y rotación. Alejandro debe inyectar esas dos claves y preparar los roles antes de verificar la API; las claves administrativas, migrator y ops no se pasan al servicio. Documentar este contrato no declara listos Docker, Make, CI ni las pruebas oficiales de M03.
 
 Los escenarios de M01 para la verificación del equipo siguen siendo: lectura válida (200 al validar y 201 al guardar), extremos inclusivos de cada métrica, dato fuera de rango o campo extra (422), lectura repetida (409), equipo inexistente (422) y base detenida (503). La preparación de la evidencia de M01, el ADR de stack y el tag `week-01-final` corresponden a Alejandro.
 
