@@ -24,24 +24,30 @@ Writer puede consultar `equipos` y consultar e insertar `lecturas`, con acceso a
 - El responsable genera contraseñas aleatorias e independientes por rol en su gestor de contraseñas y las proporciona a los consumidores indicados en la tabla. Los nombres de rol y la plantilla no sirven como contraseñas; los valores generados no se agregan a esta guía.
 - En desarrollo se puede copiar la plantilla a `.env`, que está en `.gitignore`, y completar los valores con un editor local. Usar contraseñas diferentes por rol y limitar el acceso al archivo. No adjuntar `.env` a Classroom, capturas, evidencia ni commits.
 - La API carga el `.env` de la raíz del repositorio sin sustituir variables que ya existen en el entorno del proceso. Un valor vacío exportado también tiene prioridad; corregirlo o retirarlo antes de reiniciar la API.
-- En CI y despliegue, el responsable del entorno suministra las contraseñas desde su almacén de secretos. Inyectar en la API únicamente las claves reader y writer y los datos de conexión. Las credenciales administrativas, migrator y ops pertenecen a los procesos que las necesitan.
+- En despliegue, el responsable del entorno suministra las contraseñas desde su almacén de secretos. Inyectar en la API únicamente las claves reader y writer y los datos de conexión. Las credenciales administrativas, migrator y ops pertenecen a los procesos que las necesitan. `make verify`, también en CI, genera claves aleatorias temporales para su propia base de pruebas y las enmascara en GitHub Actions.
 
 Un `.env` local compartido puede contener todas las claves del laboratorio. Eso facilita el trabajo local, pero no separa el acceso al archivo entre procesos: la API carga ese archivo completo aunque solo use dos claves para conectarse. En un despliegue no se debe montar ese archivo compartido ni pasarlo completo mediante `env_file` al servicio de la API.
 
 ## Primera preparación
 
-1. Configurar la contraseña administrativa de PostgreSQL en la fuente local o de despliegue. Iniciar PostgreSQL y aplicar las migraciones y el seed de Jonathan. Los roles nuevos de la migración 0005 tienen `PASSWORD NULL`; con autenticación por contraseña todavía no pueden conectarse.
-2. Proporcionar las contraseñas de los roles que se van a utilizar y ejecutar el rotador existente. Este script lee variables **exportadas en el entorno de Bash**; no lee ni exporta automáticamente el contenido de `.env`.
-3. Suministrar las mismas claves reader y writer al proceso de la API y arrancar Uvicorn según [API-lecturas.md](API-lecturas.md). Configurar migrator y ops cuando sus herramientas responsables requieran login directo.
+1. Configurar y exportar la contraseña administrativa y las dos contraseñas de la API antes de ejecutar Compose. Compose exige las claves reader y writer al validar el archivo completo, incluso cuando solo se solicita iniciar PostgreSQL. Si ya se guardaron valores en `.env`, exportar esos mismos valores; las variables exportadas tienen prioridad.
+2. Iniciar PostgreSQL y aplicar las migraciones y el seed de Jonathan. Los roles nuevos de la migración 0005 tienen `PASSWORD NULL`; con autenticación por contraseña todavía no pueden conectarse.
+3. Ejecutar el rotador y arrancar la API. El rotador lee variables **exportadas en el entorno de Bash**; no lee ni exporta automáticamente el contenido de `.env`. Configurar migrator y ops cuando sus herramientas responsables requieran login directo.
 
-Desde una terminal Bash interactiva, en la raíz del repositorio, este ejemplo captura las dos contraseñas de la API sin mostrarlas ni incluirlas como literales en el comando:
+Desde una terminal Bash interactiva, en la raíz del repositorio, este ejemplo prepara el entorno de desarrollo persistente. Captura las contraseñas sin mostrarlas ni incluirlas como literales en el comando:
 
 ```bash
+export POSTGRES_USER=cdrl_dev POSTGRES_DB=cdrl
+read -r -s -p 'Contraseña administrativa de PostgreSQL: ' POSTGRES_PASSWORD
+export POSTGRES_PASSWORD
 read -r -s -p 'Contraseña para cdrl_writer: ' CDRL_WRITER_PASSWORD
 export CDRL_WRITER_PASSWORD
 read -r -s -p 'Contraseña para cdrl_reader: ' CDRL_READER_PASSWORD
 export CDRL_READER_PASSWORD
+docker compose up -d --wait postgres dynamodb
+bash scripts/apply_migrations.sh
 bash scripts/rotate_db_passwords.sh writer reader
+make run
 ```
 
 Los argumentos admitidos por el procedimiento son `migrator`, `writer`, `reader` y `ops`. Sin argumentos, el script intenta actualizar los cuatro y exige sus cuatro contraseñas. No ejecutar este procedimiento con `bash -x` ni publicar volcados de variables. Al terminar una sesión administrativa que ya no necesite las claves, retirarlas de su entorno con `unset` o cerrar esa terminal.
@@ -50,11 +56,11 @@ El rotador usa `docker compose exec -T postgres` y una conexión administrativa 
 
 Reaplicar la migración 0005 no vuelve a vaciar las contraseñas: `PASSWORD NULL` se usa solo al crear un rol que no existía. El rotador es el mecanismo para asignar o cambiar las claves existentes.
 
-## Integración pendiente del entorno de Alejandro
+## Integración con Docker y verificación
 
-El `docker-compose.yml` recibido todavía pasa a `app` las credenciales administrativas y no inyecta las variables `CDRL_WRITER_PASSWORD` y `CDRL_READER_PASSWORD`. Añadir variables a `.env.example` no las introduce automáticamente en el contenedor.
+`docker-compose.yml` entrega a `app` únicamente las claves `CDRL_WRITER_PASSWORD` y `CDRL_READER_PASSWORD`, junto con los datos de conexión. Las exige como valores no vacíos; las credenciales administrativas quedan en el servicio `postgres`. Añadir variables a `.env.example` no configura sus valores.
 
-Alejandro debe sustituir el bloque `environment` de **app** por este contenido mínimo; las variables administrativas del servicio **postgres** se gestionan por separado:
+El bloque de credenciales de **app** es:
 
 ```yaml
 environment:
@@ -65,7 +71,9 @@ environment:
   CDRL_READER_PASSWORD: ${CDRL_READER_PASSWORD:?Define CDRL_READER_PASSWORD}
 ```
 
-El arranque y CI también deben aplicar la migración 0005 y asignar las contraseñas antes de verificar la API. La coordinación de estos pasos con `make setup`, `make verify` y `make run`, las pruebas oficiales y la evidencia corresponde al entorno del equipo. Esta guía no declara completada esa integración con Docker o Make.
+`make verify` crea un proyecto Compose temporal con un nombre aleatorio y claves independientes para administrador, reader y writer. Usa `cdrl_dev`/`cdrl`, aplica las migraciones y ejecuta el rotador para writer y reader antes de iniciar la API. Espera una consulta real a PostgreSQL desde `/lecturas`, en lugar de considerar suficiente que `/openapi.json` responda, y ejecuta las pruebas existentes. Los secretos temporales no se guardan en archivos ni en Git.
+
+Al terminar, incluso si falla una prueba, elimina únicamente los contenedores y volúmenes de ese proyecto temporal. No prepara ni modifica la base de desarrollo. Los puertos de PostgreSQL (5432 por defecto), DynamoDB (8000 por defecto) y API (8001) deben estar libres; se pueden exportar `POSTGRES_PORT` y `DYNAMODB_PORT` para los dos primeros. Para iniciar el entorno persistente con `make run`, seguir la preparación anterior. GitHub Actions ejecuta el mismo `make verify`, sin requerir secretos permanentes del repositorio.
 
 ## Rotación
 

@@ -15,10 +15,6 @@ for required in "${required_files[@]}"; do
   test -f "$required" || { echo "missing required file: $required" >&2; exit 1; }
 done
 
-if command -v docker >/dev/null 2>&1; then
-  docker compose config --quiet
-fi
-
 python3 - <<'PY'
 import json
 from pathlib import Path
@@ -32,6 +28,31 @@ PY
 
 mkdir -p artifacts
 
+# Cada verificación tiene credenciales y volúmenes propios. No rota las claves
+# de desarrollo ni elimina sus datos, incluso si las pruebas fallan.
+export COMPOSE_FILE="$PWD/docker-compose.yml"
+COMPOSE_PROJECT_NAME="cdrl-verify-$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_hex(8))')"
+POSTGRES_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+CDRL_READER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+CDRL_WRITER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export COMPOSE_PROJECT_NAME POSTGRES_PASSWORD CDRL_READER_PASSWORD CDRL_WRITER_PASSWORD
+export POSTGRES_USER=cdrl_dev POSTGRES_DB=cdrl
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}" DYNAMODB_PORT="${DYNAMODB_PORT:-8000}"
+if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+  printf '::add-mask::%s\n' "$POSTGRES_PASSWORD" "$CDRL_READER_PASSWORD" "$CDRL_WRITER_PASSWORD"
+fi
+docker compose config --quiet
+
+limpiar() {
+  local resultado=$?
+  trap - EXIT
+  if ! docker compose down -v --remove-orphans; then
+    if [ "$resultado" -eq 0 ]; then resultado=1; fi
+  fi
+  exit "$resultado"
+}
+trap limpiar EXIT
+
 echo "Levantando Postgres y DynamoDB..."
 docker compose up -d postgres dynamodb
 
@@ -42,10 +63,15 @@ for i in $(seq 1 30); do
   if docker compose exec -T postgres pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
     break
   fi
+  if [ "$i" -eq 30 ]; then
+    echo "PostgreSQL no quedó disponible dentro del plazo." >&2
+    exit 1
+  fi
   sleep 1
 done
 
 bash scripts/apply_migrations.sh
+bash scripts/rotate_db_passwords.sh writer reader
 
 echo "Verificando que las restricciones rechacen datos invalidos..."
 docker compose exec -T postgres \
@@ -54,10 +80,14 @@ docker compose exec -T postgres \
 echo "Levantando la API..."
 docker compose up -d --build app
 
-echo "Esperando a que la API responda..."
+echo "Esperando a que la API consulte PostgreSQL con el rol reader..."
 for i in $(seq 1 30); do
-  if curl -fs http://localhost:8001/openapi.json > /dev/null 2>&1; then
+  if curl -fs --max-time 4 'http://localhost:8001/lecturas?equipo=edge-01&limite=1' > /dev/null 2>&1; then
     break
+  fi
+  if [ "$i" -eq 30 ]; then
+    echo "La API no pudo consultar PostgreSQL dentro del plazo; revisar credenciales y preparación de roles." >&2
+    exit 1
   fi
   sleep 1
 done
@@ -90,6 +120,7 @@ summary = {
 Path("artifacts/base-verify.json").write_text(json.dumps(summary, indent=2) + "\n")
 PY
 
-docker compose down -v
+docker compose down -v --remove-orphans
+trap - EXIT
 
 echo "CDRL M02 verification passed"

@@ -8,7 +8,7 @@ Esta carpeta es la base común del proyecto **Cloud Data Reliability Lab (CDRL)*
 2. Crea un repositorio GitHub propio para tu equipo; no trabajes sobre el repositorio del curso.
 3. Copia el contenido de esta carpeta al repositorio del equipo.
 4. Agrega únicamente a los integrantes del equipo, con un máximo de tres personas.
-5. Ejecuta `make setup`, `make verify` y `make run`.
+5. Ejecuta `make setup` y `make verify`. Para iniciar el entorno persistente con `make run`, completa primero la [preparación de credenciales y roles](docs/SECRETS.md#primera-preparación).
 6. Completa el hito semanal y conserva evidencia técnica individual de tu contribución.
 
 El lenguaje de la aplicación lo selecciona el equipo y debe documentarse en un ADR. La interfaz mínima común del repositorio es:
@@ -18,6 +18,8 @@ make setup
 make verify
 make run
 ```
+
+`make verify` usa claves aleatorias y una base temporal aislada, que elimina al terminar incluso si fallan las pruebas. Requiere Docker y los puertos de los servicios disponibles. No prepara la base de desarrollo; sus credenciales, migraciones y asignación de contraseñas se configuran por separado antes de `make run`.
 
 ## Entornos
 

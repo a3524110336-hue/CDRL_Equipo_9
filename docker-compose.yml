@@ -26,8 +26,8 @@ services:
     build: .
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cdrl}
-      POSTGRES_USER: ${POSTGRES_USER:-cdrl_dev}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cdrl_dev_only}
+      CDRL_READER_PASSWORD: ${CDRL_READER_PASSWORD:?Define CDRL_READER_PASSWORD}
+      CDRL_WRITER_PASSWORD: ${CDRL_WRITER_PASSWORD:?Define CDRL_WRITER_PASSWORD}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
     ports:
