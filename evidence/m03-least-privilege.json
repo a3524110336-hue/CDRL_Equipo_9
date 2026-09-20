@@ -1,0 +1,27 @@
+{
+  "assignmentId": "m03-role-separation",
+  "commitSha": "REPLACE_AT_SUBMISSION",
+  "tag": "week-03-final",
+  "commands": [
+    "make setup",
+    "make verify",
+    "make run"
+  ],
+  "results": {
+    "roles": "4 roles con mínimo privilegio (cdrl_migrator, cdrl_writer, cdrl_reader, cdrl_ops) — ver db/migrations/0005_roles_privilegios.sql y docs/ADR-003-roles-y-minimo-privilegio.md",
+    "secrets": "sin contraseñas versionadas; procedimiento de rotación en docs/SECRETS.md; scripts/rotate_db_passwords.sh asigna contraseñas desde variables de entorno, nunca desde archivos",
+    "secret_scan": "gitleaks sobre todo el historial de git, integrado en .github/workflows/cdrl-feedback.yml (checkout con fetch-depth 0 + gitleaks/gitleaks-action@v3); el resultado es la corrida en verde de GitHub Actions",
+    "access_control_tests": "1 caso normal, 2 casos límite, 1 fallo declarado y 3 pruebas de acceso denegado (reader INSERT, writer DDL, ops lectura de datos de negocio) — ver tests/test_access_control.py y artifacts/base-verify.json",
+    "api_integration": "docker-compose.yml inyecta a la API solo CDRL_WRITER_PASSWORD y CDRL_READER_PASSWORD, no credenciales administrativas"
+  },
+  "assumptions": [
+    "Las contraseñas de los roles se generan de forma sintética y aleatoria en cada corrida de make verify (scripts/verify_base.sh), nunca se fijan ni se versionan.",
+    "gitleaks no requiere licencia porque el repositorio pertenece a una cuenta personal, no a una organización.",
+    "AWS Academy Learner Lab se usará solo si el servicio está habilitado; el respaldo es Docker Compose."
+  ],
+  "limitations": [
+    "commitSha nombra el commit verificado en verde por GitHub Actions, cuyo reporte de make verify se entrega. El SHA exacto de la entrega es el que resuelve el tag week-03-final (mismo patrón documentado en evidence/m02-relational-model.json).",
+    "gitleaks revisa el estado actual del historial de git en el momento de cada corrida; no certifica commits futuros ni ramas que no se hayan escaneado.",
+    "Cambiar una contraseña no cierra las sesiones de base de datos ya abiertas (documentado en docs/SECRETS.md, sección Rotación)."
+  ]
+}

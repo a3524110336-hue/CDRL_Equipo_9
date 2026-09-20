@@ -8,6 +8,7 @@ required_files=(
   "docs/ADR-000-starter-base.md"
   "evidence/m01-data-contract.json"
   "evidence/m02-relational-model.json"
+  "evidence/m03-least-privilege.json"
   ".github/workflows/cdrl-feedback.yml"
 )
 
@@ -19,7 +20,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-payload = json.loads(Path("evidence/m02-relational-model.json").read_text())
+payload = json.loads(Path("evidence/m03-least-privilege.json").read_text())
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
 missing = sorted(required.difference(payload))
 if missing:
@@ -35,11 +36,12 @@ COMPOSE_PROJECT_NAME="cdrl-verify-$("${PYTHON_BIN:-python3}" -c 'import secrets;
 POSTGRES_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
 CDRL_READER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
 CDRL_WRITER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export COMPOSE_PROJECT_NAME POSTGRES_PASSWORD CDRL_READER_PASSWORD CDRL_WRITER_PASSWORD
+CDRL_OPS_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export COMPOSE_PROJECT_NAME POSTGRES_PASSWORD CDRL_READER_PASSWORD CDRL_WRITER_PASSWORD CDRL_OPS_PASSWORD
 export POSTGRES_USER=cdrl_dev POSTGRES_DB=cdrl
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}" DYNAMODB_PORT="${DYNAMODB_PORT:-8000}"
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-  printf '::add-mask::%s\n' "$POSTGRES_PASSWORD" "$CDRL_READER_PASSWORD" "$CDRL_WRITER_PASSWORD"
+  printf '::add-mask::%s\n' "$POSTGRES_PASSWORD" "$CDRL_READER_PASSWORD" "$CDRL_WRITER_PASSWORD" "$CDRL_OPS_PASSWORD"
 fi
 docker compose config --quiet
 
@@ -71,7 +73,7 @@ for i in $(seq 1 30); do
 done
 
 bash scripts/apply_migrations.sh
-bash scripts/rotate_db_passwords.sh writer reader
+bash scripts/rotate_db_passwords.sh writer reader ops
 
 echo "Verificando que las restricciones rechacen datos invalidos..."
 docker compose exec -T postgres \
@@ -109,8 +111,8 @@ root = tree.getroot()
 suite = root.find("testsuite") if root.tag != "testsuite" else root
 
 summary = {
-    "status": "m02_relational_model_valid",
-    "scope": "schema_constraints_queries_and_tests",
+    "status": "m03_least_privilege_valid",
+    "scope": "role_separation_secrets_and_access_control",
     "tests": {
         "total": int(suite.get("tests", 0)),
         "failures": int(suite.get("failures", 0)),
@@ -123,4 +125,4 @@ PY
 docker compose down -v --remove-orphans
 trap - EXIT
 
-echo "CDRL M02 verification passed"
+echo "CDRL M03 verification passed"
