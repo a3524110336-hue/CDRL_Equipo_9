@@ -1,6 +1,6 @@
 {
   "assignmentId": "m03-role-separation",
-  "commitSha": "REPLACE_AT_SUBMISSION",
+  "commitSha": "8afb28d56aacd652ada6f32a6d879aaac0fe0fd6",
   "tag": "week-03-final",
   "commands": [
     "make setup",
