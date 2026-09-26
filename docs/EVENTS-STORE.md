@@ -6,6 +6,9 @@ Autor: Marco Antonio Osorio Hernandez.
 conserva las lecturas, umbrales y endpoints existentes. La API no hace escrituras
 dobles entre motores. El servicio `app` de Compose espera la tabla DynamoDB y su
 índice antes de iniciar Uvicorn; si no puede prepararlos, termina con error.
+El servicio transitorio `dynamodb-init` asigna el directorio del volumen al
+UID/GID 1000 de la imagen antes del arranque. DynamoDB continúa ejecutándose
+sin root y el volumen conserva sus datos; no se montan ni persisten los JARs.
 
 ## Configuración
 
