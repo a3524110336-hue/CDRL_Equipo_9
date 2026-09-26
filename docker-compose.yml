@@ -30,11 +30,24 @@ services:
       CDRL_WRITER_PASSWORD: ${CDRL_WRITER_PASSWORD:?Define CDRL_WRITER_PASSWORD}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-http://dynamodb:8000}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-cdrl_eventos}
+      DYNAMODB_LOCAL: ${DYNAMODB_LOCAL:-true}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+    command:
+      - /bin/sh
+      - -c
+      - python -m src.events_store && exec python -m uvicorn src.main:app --host 0.0.0.0 --port 8001
     ports:
       - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
+      dynamodb:
+        condition: service_started
         
 volumes:
   postgres_data:
