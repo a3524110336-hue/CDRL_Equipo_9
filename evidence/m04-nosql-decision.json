@@ -1,6 +1,6 @@
 {
   "assignmentId": "m04-nosql-decision",
-  "commitSha": "COMPLETAR_SHA_DE_40_CARACTERES",
+  "commitSha": "d3ea63d5967f2ecb564a089f7a9b6e37a9d75f3a",
   "tag": "week-04-final",
   "commands": ["make setup", "make verify", "make run"],
   "results": {
