@@ -10,6 +10,8 @@ required_files=(
   "evidence/m02-relational-model.json"
   "evidence/m03-least-privilege.json"
   ".github/workflows/cdrl-feedback.yml"
+  "evidence/m03-least-privilege.json"
+  "evidence/m04-nosql-decision.json"
 )
 
 for required in "${required_files[@]}"; do
@@ -20,11 +22,12 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-payload = json.loads(Path("evidence/m03-least-privilege.json").read_text())
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
-missing = sorted(required.difference(payload))
-if missing:
-    raise SystemExit(f"missing evidence fields: {', '.join(missing)}")
+for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json"):
+    payload = json.loads(Path(name).read_text(encoding="utf-8"))
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise SystemExit(f"missing evidence fields in {name}: {', '.join(missing)}")
 PY
 
 mkdir -p artifacts
