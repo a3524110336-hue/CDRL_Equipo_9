@@ -1,0 +1,23 @@
+{
+  "assignmentId": "m04-nosql-decision",
+  "commitSha": "COMPLETAR_SHA_DE_40_CARACTERES",
+  "tag": "week-04-final",
+  "commands": ["make setup", "make verify", "make run"],
+  "results": {
+    "matrix": "Matriz ponderada de document, graph, column y object stores en artifacts/nosql-matrix.json, generada por scripts/measure_nosql.py con fixtures sintéticos (seed 42); cada criterio declara si es medición o hipótesis y su condición de falsación.",
+    "decision": "Ver docs/ADR (decisión NoSQL): conecta consultas, escala, consistencia, costo y fallos, e incluye la alternativa descartada indicada en discarded_alternative.",
+    "store_tests": "1 caso normal, 2 casos límite (partición caliente e ítem al filo del tamaño máximo) y 1 fallo declarado — ver tests/test_events_store.py",
+    "matrix_tests": "Validación automática de pesos, totales, falsabilidad y alternativa descartada — ver tests/test_nosql_matrix.py",
+    "secrets": "Sin credenciales, tokens ni cadenas de conexión versionados; el emulador en proceso no usa red ni claves."
+  },
+  "assumptions": [
+    "Los límites del emulador (400 KB por ítem, 1000 escrituras/s por partición) provienen de la documentación de DynamoDB y deben verificarse contra la versión vigente.",
+    "Los puntajes de las celdas de la matriz son juicio del equipo; solo las entradas de measurements son resultado del código.",
+    "AWS Academy Learner Lab se usará solo si el servicio está habilitado; el respaldo es Docker Compose con DynamoDB Local."
+  ],
+  "limitations": [
+    "DynamoDB Local no simula el throttling por partición, por lo que la prueba de partición caliente valida un modelo, no el servicio real.",
+    "Las mediciones usan fixtures sintéticos; los tamaños reales de eventos CDRL pueden diferir.",
+    "commitSha nombra el commit verificado en verde; el SHA exacto de la entrega es el que resuelve el tag week-04-final (mismo patrón que evidence/m03-least-privilege.json)."
+  ]
+}

@@ -1,0 +1,109 @@
+{
+  "schema": "nosql-matrix/1",
+  "generated_at": "2026-09-28T01:40:53.136089+00:00",
+  "synthetic_fixtures": true,
+  "seed": 42,
+  "note": "El emulador modela límites de DynamoDB; DynamoDB Local no simula throttling por partición.",
+  "measurements": {
+    "event_p50_bytes": 144.0,
+    "event_p99_bytes": 223,
+    "max_item_bytes": 409600,
+    "partition_wcu": 1000,
+    "hot_1_shard_accepted": 1000,
+    "hot_4_shards_accepted": 4000,
+    "writes_attempted": 4000,
+    "boundary_rejects_plus1_without_partial_write": true,
+    "failure_declared_without_partial_write": true
+  },
+  "criteria": [
+    {
+      "id": "query_fit",
+      "weight": 0.3,
+      "kind": "hypothesis",
+      "claim": "El acceso dominante es por (dispositivo, rango de tiempo)",
+      "falsified_if": "más del 10% de las consultas del ADR requieren travesías multi-salto",
+      "scores": {
+        "document": 4,
+        "graph": 2,
+        "column": 4,
+        "object": 1
+      }
+    },
+    {
+      "id": "item_size",
+      "weight": 0.15,
+      "kind": "measurement",
+      "claim": "El p99 del evento (223 B) cabe en 409600 B",
+      "falsified_if": "p99 mayor al límite de ítem",
+      "scores": {
+        "document": 4,
+        "graph": 3,
+        "column": 4,
+        "object": 5
+      }
+    },
+    {
+      "id": "hot_partition",
+      "weight": 0.2,
+      "kind": "measurement",
+      "claim": "Con sharding se aceptan 4000 de 4000 escrituras vs 1000 con una sola clave",
+      "falsified_if": "hot_4_shards_accepted <= hot_1_shard_accepted",
+      "scores": {
+        "document": 3,
+        "graph": 2,
+        "column": 4,
+        "object": 4
+      }
+    },
+    {
+      "id": "consistency",
+      "weight": 0.1,
+      "kind": "hypothesis",
+      "claim": "Lecturas fuertes por clave bastan para los eventos CDRL",
+      "falsified_if": "un caso de uso del ADR exige transacciones multi-ítem",
+      "scores": {
+        "document": 4,
+        "graph": 4,
+        "column": 3,
+        "object": 3
+      }
+    },
+    {
+      "id": "cost",
+      "weight": 0.15,
+      "kind": "hypothesis",
+      "claim": "El costo por millón de escrituras es menor en document/object que en graph",
+      "falsified_if": "una estimación con precios vigentes lo contradice",
+      "scores": {
+        "document": 3,
+        "graph": 2,
+        "column": 3,
+        "object": 5
+      }
+    },
+    {
+      "id": "failure",
+      "weight": 0.1,
+      "kind": "measurement",
+      "claim": "El fallo del store se declara sin escritura parcial",
+      "falsified_if": "test_declared_failure_store_unavailable_no_silent_loss falla",
+      "scores": {
+        "document": 4,
+        "graph": 3,
+        "column": 3,
+        "object": 4
+      }
+    }
+  ],
+  "totals": {
+    "document": 3.65,
+    "graph": 2.45,
+    "column": 3.65,
+    "object": 3.3
+  },
+  "selected": "document",
+  "discarded_alternative": {
+    "store": "graph",
+    "reason": "COMPLETAR con lo mismo que diga el ADR"
+  }
+}
