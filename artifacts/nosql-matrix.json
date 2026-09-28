@@ -1,9 +1,10 @@
 {
   "schema": "nosql-matrix/1",
-  "generated_at": "2026-09-28T01:40:53.136089+00:00",
+  "generated_at": "2026-09-28T02:05:09.851958+00:00",
   "synthetic_fixtures": true,
   "seed": 42,
   "note": "El emulador modela límites de DynamoDB; DynamoDB Local no simula throttling por partición.",
+  "scope_note": "Las mediciones validan el modelo de un document store. Los puntajes de graph, column y object en criterios measurement son juicio del equipo, no medición.",
   "measurements": {
     "event_p50_bytes": 144.0,
     "event_p99_bytes": 223,
@@ -101,9 +102,19 @@
     "column": 3.65,
     "object": 3.3
   },
+  "tie": true,
+  "tied_stores": [
+    "column",
+    "document"
+  ],
+  "tie_break": {
+    "chosen": "document",
+    "rule": "Menor riesgo operativo y mayor reproducibilidad: docker-compose.yml ya incluye DynamoDB Local (imagen fijada por digest), por lo que un document store se verifica en make verify sin servicios adicionales.",
+    "falsified_if": "un column store con emulador local se levanta en make verify sin cambiar puertos, credenciales ni tiempos de arranque"
+  },
   "selected": "document",
   "discarded_alternative": {
-    "store": "graph",
-    "reason": "COMPLETAR con lo mismo que diga el ADR"
+    "store": "column",
+    "reason": "Empató con document (3.65). Se descartó por riesgo operativo: no hay emulador de column store en docker-compose.yml y añadirlo complicaría make verify (puertos, arranque, credenciales), mientras DynamoDB Local ya está integrado y fijado por digest."
   }
 }

@@ -50,7 +50,7 @@ M = {"event_p50_bytes": statistics.median(sizes), "event_p99_bytes": p99,
      "boundary_rejects_plus1_without_partial_write": boundary_ok,
      "failure_declared_without_partial_write": failure_ok}
 
-# Pesos (suman 1.0) y puntajes 1-5: son JUICIO del equipo, no medición. Ajústalos.
+# Pesos (suman 1.0) y puntajes 1-5: JUICIO del equipo, no medición. Ajústalos con el ADR.
 C = [
  ("query_fit", 0.30, "hypothesis", "El acceso dominante es por (dispositivo, rango de tiempo)",
   "más del 10% de las consultas del ADR requieren travesías multi-salto",
@@ -72,14 +72,39 @@ crit = [{"id": i, "weight": w, "kind": k, "claim": cl, "falsified_if": f, "score
         for i, w, k, cl, f, sc in C]
 tot = {st: round(sum(c["weight"] * c["scores"][st] for c in crit), 3)
        for st in ("document", "graph", "column", "object")}
-selected = max(tot, key=tot.get)
+
+best = max(tot.values())
+winners = sorted(st for st, t in tot.items() if t == best)
+TIE_BREAK = {
+    "chosen": "document",
+    "rule": "Menor riesgo operativo y mayor reproducibilidad: docker-compose.yml ya incluye "
+            "DynamoDB Local (imagen fijada por digest), por lo que un document store se "
+            "verifica en make verify sin servicios adicionales.",
+    "falsified_if": "un column store con emulador local se levanta en make verify sin "
+                    "cambiar puertos, credenciales ni tiempos de arranque",
+}
+if len(winners) > 1:
+    assert TIE_BREAK["chosen"] in winners
+    selected = TIE_BREAK["chosen"]
+else:
+    selected = winners[0]
 
 out = {"schema": "nosql-matrix/1",
        "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
        "synthetic_fixtures": True, "seed": 42,
        "note": "El emulador modela límites de DynamoDB; DynamoDB Local no simula throttling por partición.",
-       "measurements": M, "criteria": crit, "totals": tot, "selected": selected,
-       "discarded_alternative": {"store": "graph", "reason": "COMPLETAR con lo mismo que diga el ADR"}}
+       "scope_note": "Las mediciones validan el modelo de un document store. Los puntajes de "
+                     "graph, column y object en criterios measurement son juicio del equipo, no medición.",
+       "measurements": M, "criteria": crit, "totals": tot,
+       "tie": len(winners) > 1, "tied_stores": winners,
+       "tie_break": TIE_BREAK if len(winners) > 1 else None,
+       "selected": selected,
+       "discarded_alternative": {
+           "store": "column",
+           "reason": "Empató con document (3.65). Se descartó por riesgo operativo: no hay "
+                     "emulador de column store en docker-compose.yml y añadirlo complicaría "
+                     "make verify (puertos, arranque, credenciales), mientras DynamoDB Local "
+                     "ya está integrado y fijado por digest."}}
 
 (ROOT / "artifacts").mkdir(exist_ok=True)
 (ROOT / "artifacts" / "nosql-matrix.json").write_text(
