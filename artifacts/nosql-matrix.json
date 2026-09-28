@@ -1,10 +1,17 @@
 {
-  "schema": "nosql-matrix/1",
-  "generated_at": "2026-09-28T02:13:04.517561+00:00",
+  "schema": "nosql-matrix/2",
+  "generated_at": "2026-09-28T02:29:20.972524+00:00",
   "synthetic_fixtures": true,
   "seed": 42,
-  "note": "El emulador modela límites de DynamoDB; DynamoDB Local no simula throttling por partición.",
-  "scope_note": "Las mediciones validan el modelo de un document store. Los puntajes de graph, column y object en criterios measurement son juicio del equipo, no medición.",
+  "source_of_weights": "docs/ADR-004-decision-nosql.md (tabla de criterios, puntuacion 1-5)",
+  "note": "El emulador en proceso modela limites de DynamoDB; DynamoDB Local no simula throttling por particion.",
+  "scope_note": "Las mediciones respaldan C3, C5 y C6 sobre el modelo de DynamoDB. Los puntajes de los otros stores son juicio documentado en el ADR, no medicion.",
+  "stores": {
+    "dynamodb": "DynamoDB (column / particion + rango)",
+    "document": "Document (MongoDB / DocumentDB)",
+    "graph": "Graph (Neo4j / Neptune)",
+    "object": "Object (S3 + Parquet + Athena)"
+  },
   "measurements": {
     "event_p50_bytes": 144.0,
     "event_p99_bytes": 223,
@@ -14,107 +21,124 @@
     "hot_4_shards_accepted": 4000,
     "writes_attempted": 4000,
     "boundary_rejects_plus1_without_partial_write": true,
-    "failure_declared_without_partial_write": true
+    "failure_declared_without_partial_write": true,
+    "compose_pins_dynamodb_local_digest": true
   },
   "criteria": [
     {
-      "id": "query_fit",
+      "id": "C1",
       "weight": 0.3,
       "kind": "hypothesis",
-      "claim": "El acceso dominante es por (dispositivo, rango de tiempo)",
-      "falsified_if": "más del 10% de las consultas del ADR requieren travesías multi-salto",
+      "claim": "Q1/Q3 (ultima N por equipo, orden temporal) se resuelven con particion + rango sin sort posterior",
+      "falsified_if": "una consulta Q1/Q3 requiere sort o scan posterior (H1 del ADR-004)",
+      "evidence": "Q1/Q3 en src/queries.py; H1",
       "scores": {
+        "dynamodb": 5,
         "document": 4,
         "graph": 2,
-        "column": 4,
         "object": 1
       }
     },
     {
-      "id": "item_size",
+      "id": "C2",
       "weight": 0.15,
-      "kind": "measurement",
-      "claim": "El p99 del evento (223 B) cabe en 409600 B",
-      "falsified_if": "p99 mayor al límite de ítem",
+      "kind": "hypothesis",
+      "claim": "Q2 (agregacion por ventana) es el punto debil de DynamoDB; el ADR lo declara",
+      "falsified_if": "H2 se refuta con numeros duros: la agregacion en servidor pasa a ganar la matriz",
+      "evidence": "Q2 en src/queries.py; H2",
       "scores": {
-        "document": 4,
-        "graph": 3,
-        "column": 4,
+        "dynamodb": 2,
+        "document": 5,
+        "graph": 2,
         "object": 5
       }
     },
     {
-      "id": "hot_partition",
-      "weight": 0.2,
+      "id": "C3",
+      "weight": 0.15,
       "kind": "measurement",
-      "claim": "Con sharding se aceptan 4000 de 4000 escrituras vs 1000 con una sola clave",
-      "falsified_if": "hot_4_shards_accepted <= hot_1_shard_accepted",
+      "claim": "Escritura append-only sostenida: con 4 shards se aceptan 4000 de 4000 escrituras vs 1000 con una sola particion (modelo)",
+      "falsified_if": "hot_4_shards_accepted <= hot_1_shard_accepted, o H3 del ADR-004 se refuta",
+      "evidence": "H3; tests/test_events_store.py",
       "scores": {
-        "document": 3,
-        "graph": 2,
-        "column": 4,
-        "object": 4
-      }
-    },
-    {
-      "id": "consistency",
-      "weight": 0.1,
-      "kind": "hypothesis",
-      "claim": "Lecturas fuertes por clave bastan para los eventos CDRL",
-      "falsified_if": "un caso de uso del ADR exige transacciones multi-ítem",
-      "scores": {
+        "dynamodb": 5,
         "document": 4,
-        "graph": 4,
-        "column": 3,
+        "graph": 2,
         "object": 3
       }
     },
     {
-      "id": "cost",
-      "weight": 0.15,
+      "id": "C4",
+      "weight": 0.1,
       "kind": "hypothesis",
-      "claim": "El costo por millón de escrituras es menor en document/object que en graph",
-      "falsified_if": "una estimación con precios vigentes lo contradice",
+      "claim": "Alta idempotente y convergencia mediante ConditionExpression (ADR-002)",
+      "falsified_if": "un alta duplicada crea una segunda fila (H4 del ADR-004)",
+      "evidence": "ADR-002 + ConditionExpression; H4",
       "scores": {
-        "document": 3,
-        "graph": 2,
-        "column": 3,
-        "object": 5
+        "dynamodb": 4,
+        "document": 4,
+        "graph": 3,
+        "object": 1
       }
     },
     {
-      "id": "failure",
+      "id": "C5",
+      "weight": 0.15,
+      "kind": "measurement",
+      "claim": "docker-compose.yml fija dynamodb-local por digest y make verify lo levanta",
+      "falsified_if": "compose_pins_dynamodb_local_digest es false",
+      "evidence": "docker-compose.yml; ADR-000",
+      "scores": {
+        "dynamodb": 5,
+        "document": 3,
+        "graph": 2,
+        "object": 4
+      }
+    },
+    {
+      "id": "C6",
       "weight": 0.1,
       "kind": "measurement",
-      "claim": "El fallo del store se declara sin escritura parcial",
-      "falsified_if": "test_declared_failure_store_unavailable_no_silent_loss falla",
+      "claim": "Un fallo del store se declara y un item sobre el limite se rechaza, ambos sin escritura parcial",
+      "falsified_if": "falla test_declared_failure_store_unavailable_no_silent_loss o test_limit_item_at_max_size_boundary",
+      "evidence": "Prueba de fallo declarado de M04",
       "scores": {
-        "document": 4,
+        "dynamodb": 4,
+        "document": 3,
         "graph": 3,
-        "column": 3,
         "object": 4
+      }
+    },
+    {
+      "id": "C7",
+      "weight": 0.05,
+      "kind": "hypothesis",
+      "claim": "make verify ya levanta DynamoDB Local; otro motor anade un servicio y una ruta de fallo",
+      "falsified_if": "el compose necesita servicios adicionales para DynamoDB",
+      "evidence": "scripts/verify_base.sh",
+      "scores": {
+        "dynamodb": 4,
+        "document": 3,
+        "graph": 2,
+        "object": 3
       }
     }
   ],
   "totals": {
-    "document": 3.65,
-    "graph": 2.45,
-    "column": 3.65,
-    "object": 3.3
+    "dynamodb": 4.3,
+    "document": 3.85,
+    "graph": 2.2,
+    "object": 2.75
   },
-  "tie": true,
+  "tie": false,
   "tied_stores": [
-    "column",
-    "document"
+    "dynamodb"
   ],
-  "tie_break": {
-    "chosen": "document",
-    "rule": "Menor riesgo operativo y mayor reproducibilidad: docker-compose.yml ya incluye DynamoDB Local (imagen fijada por digest), por lo que un document store se verifica en make verify sin servicios adicionales.",
-    "falsified_if": "un column store con emulador local se levanta en make verify sin cambiar puertos, credenciales ni tiempos de arranque"
-  },
-  "selected": "document",
+  "tie_break": null,
+  "selected": "dynamodb",
+  "margin_vs_runner_up": 0.45,
   "discarded_alternative": {
-    "store": "column",
-    "reason": "Empató con document (3.65). Se descartó por riesgo operativo: no hay emulador de column store en docker-compose.yml y añadirlo complicaría make verify (puertos, arranque, credenciales), mientras DynamoDB Local ya está integrado y fijado por digest."
+    "store": "document",
+    "reason": "Es la que mas cerca quedo (margen estrecho). Gana C2 con claridad porque $group agrega en servidor, pero pierde en C5: el compose ya fija dynamodb-local por digest y Learner Lab expone DynamoDB, asi que un segundo motor anade servicio, cliente y ruta de fallo a make verify sin cambiar Q1/Q3. Se reabre si H2 se refuta con ventanas de agregacion grandes."
   }
 }
