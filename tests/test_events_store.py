@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.events_store import (EventStore, ItemTooLarge, PartitionThrottled,
+from src.events_store_model import (EventStore, ItemTooLarge, PartitionThrottled,
                               StoreUnavailable, MAX_ITEM_BYTES, PARTITION_WCU)
 
 

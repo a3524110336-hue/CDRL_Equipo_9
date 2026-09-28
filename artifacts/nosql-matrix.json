@@ -1,6 +1,6 @@
 {
   "schema": "nosql-matrix/1",
-  "generated_at": "2026-09-28T02:05:09.851958+00:00",
+  "generated_at": "2026-09-28T02:13:04.517561+00:00",
   "synthetic_fixtures": true,
   "seed": 42,
   "note": "El emulador modela límites de DynamoDB; DynamoDB Local no simula throttling por partición.",

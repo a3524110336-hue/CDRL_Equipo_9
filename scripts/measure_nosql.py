@@ -3,7 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from src.events_store import (EventStore, ItemTooLarge, PartitionThrottled,
+from src.events_store_model import (EventStore, ItemTooLarge, PartitionThrottled,
                               StoreUnavailable, MAX_ITEM_BYTES, PARTITION_WCU)
 
 rng = random.Random(42)  # semilla fija: siempre da lo mismo
