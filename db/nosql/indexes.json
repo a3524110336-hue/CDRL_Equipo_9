@@ -1,0 +1,111 @@
+{
+  "schema": "cdrl-nosql-indexes/1",
+  "adr": "docs/ADR-005-almacen-documental.md",
+  "description": "Indices declarados del almacen documental de eventos. ensure_table() compara la tabla real contra este archivo; una consulta que no aparece aqui no existe.",
+  "table": {
+    "TableNameEnv": "DYNAMODB_TABLE",
+    "DefaultTableName": "cdrl_eventos",
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+      {"AttributeName": "PK", "KeyType": "HASH"},
+      {"AttributeName": "SK", "KeyType": "RANGE"}
+    ],
+    "AttributeDefinitions": [
+      {"AttributeName": "PK", "AttributeType": "S"},
+      {"AttributeName": "SK", "AttributeType": "S"},
+      {"AttributeName": "GSI1PK", "AttributeType": "S"},
+      {"AttributeName": "GSI1SK", "AttributeType": "S"}
+    ],
+    "GlobalSecondaryIndexes": [
+      {
+        "IndexName": "GSI1",
+        "KeySchema": [
+          {"AttributeName": "GSI1PK", "KeyType": "HASH"},
+          {"AttributeName": "GSI1SK", "KeyType": "RANGE"}
+        ],
+        "Projection": {"ProjectionType": "ALL"},
+        "Sparse": true,
+        "Entities": ["alerta"]
+      }
+    ]
+  },
+  "key_formats": {
+    "lectura": {
+      "PK": "EQ#{equipo_codigo}#{metrica}",
+      "SK": "TS#{medido_en_utc}#{lectura_id:019d}"
+    },
+    "alerta": {
+      "PK": "LECTURA#{lectura_id:019d}",
+      "SK": "UMBRAL#{umbral_id:019d}",
+      "GSI1PK": "ALERTA#{estado}#{shard}",
+      "GSI1SK": "SEV#{severidad_rango}#TS#{medido_en_utc}#LECTURA#{lectura_id:019d}#UMBRAL#{umbral_id:019d}"
+    },
+    "notes": {
+      "medido_en_utc": "ISO 8601 en UTC con microsegundos y Z, por ejemplo 2026-10-03T16:00:00.000000Z",
+      "019d": "Enteros positivos de 64 bits rellenados a 19 digitos para conservar el orden numerico",
+      "shard": "SHA-256 de LECTURA#<id>#UMBRAL#<id>, primeros 8 bytes big-endian, modulo 4",
+      "severidad_rango": "advertencia = 1, critica = 2; el orden descendente pone primero las criticas"
+    }
+  },
+  "alert_shards": 4,
+  "queries": [
+    {
+      "id": "Q1",
+      "name": "ULTIMAS_LECTURAS",
+      "index": "TABLE",
+      "operation": "Query",
+      "key_condition": "PK = EQ#<equipo>#<metrica> AND SK BETWEEN TS#<desde># AND TS#<hasta>#~",
+      "scan_index_forward": false,
+      "limit": "N (1..1000)",
+      "calls": "1 por metrica; 5 secuenciales si no se filtra metrica",
+      "client_side": "mezcla de las 5 metricas por SK descendente",
+      "function": "EventsStore.ultimas_lecturas"
+    },
+    {
+      "id": "Q2",
+      "name": "RESUMEN_POR_METRICA",
+      "index": "TABLE",
+      "operation": "Query",
+      "key_condition": "PK = EQ#<equipo>#<metrica> AND SK BETWEEN TS#<desde># AND TS#<hasta>#~",
+      "scan_index_forward": false,
+      "limit": "paginado hasta agotar la ventana",
+      "calls": "5, una por metrica",
+      "client_side": "count, avg, min y max sobre los items de la ventana",
+      "function": "EventsStore.iter_lecturas"
+    },
+    {
+      "id": "Q3",
+      "name": "LECTURAS_FUERA_DE_UMBRAL",
+      "index": "TABLE",
+      "operation": "Query",
+      "key_condition": "PK = EQ#<equipo>#<metrica> AND SK BETWEEN TS#<desde># AND TS#<hasta>#~",
+      "scan_index_forward": false,
+      "limit": "N (1..1000)",
+      "calls": "igual que Q1",
+      "client_side": "valor < minimo o valor > maximo contra el umbral vigente de PostgreSQL; los extremos estan dentro",
+      "function": "EventsStore.ultimas_lecturas"
+    },
+    {
+      "id": "Q4",
+      "name": "ALERTAS_POR_ESTADO",
+      "index": "GSI1",
+      "operation": "Query",
+      "key_condition": "GSI1PK = ALERTA#<estado>#<shard>",
+      "scan_index_forward": false,
+      "limit": "1..1000 por pagina",
+      "calls": "4, una por shard",
+      "client_side": "mezcla de los 4 shards; antes de cambiar una alerta se relee con GetItem fuerte en la tabla base",
+      "consistency": "eventual (los GSI no admiten lectura fuerte)",
+      "function": "EventsStore.query_alertas"
+    }
+  ],
+  "operations": [
+    {"name": "put_lectura", "entity": "lectura", "index": "TABLE", "operation": "PutItem", "condition": "attribute_not_exists(PK)", "idempotent": "en efecto: el duplicado falla con ConditionalCheckFailedException y el original queda intacto"},
+    {"name": "get_lectura", "entity": "lectura", "index": "TABLE", "operation": "GetItem", "condition": null, "idempotent": "si: solo lee; ausencia devuelve None"},
+    {"name": "put_alerta", "entity": "alerta", "index": "TABLE", "operation": "PutItem", "condition": "attribute_not_exists(PK)", "idempotent": "en efecto: no puede existir una segunda alerta del mismo par (lectura, umbral)"},
+    {"name": "get_alerta", "entity": "alerta", "index": "TABLE", "operation": "GetItem", "consistent_read": true, "condition": null, "idempotent": "si: solo lee; ausencia devuelve None"},
+    {"name": "actualizar_estado_alerta", "entity": "alerta", "index": "TABLE", "operation": "UpdateItem", "condition": "attribute_exists(PK) AND estado = :estado_anterior", "transitions": ["abierta->reconocida", "reconocida->cerrada", "abierta->cerrada"], "idempotent": "si: pedir el estado actual no cambia nada y no es error"},
+    {"name": "delete_alerta", "entity": "alerta", "index": "TABLE", "operation": "DeleteItem", "return_values": "ALL_OLD", "condition": null, "idempotent": "si: borrar lo que no existe termina bien e informa que no existia"}
+  ],
+  "forbidden_operations": ["Scan", "FilterExpression", "UpdateItem sobre lecturas", "DeleteItem sobre lecturas"]
+}

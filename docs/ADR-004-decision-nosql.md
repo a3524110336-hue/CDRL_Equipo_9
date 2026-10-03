@@ -87,6 +87,11 @@ SK = "TS#<medido_en ISO-8601 UTC>#<id_lectura>"
 
 ### Alertas en la misma tabla
 
+> **Corregido en ADR-005.** Esta clave no impone la unicidad de
+> `(lectura_id, umbral_id)`: la identidad pasa a la clave base
+> (`LECTURA#<id>` / `UMBRAL#<id>`) y el acceso por estado y shard vive en `GSI1`.
+> Ver `docs/ADR-005-almacen-documental.md`, sección 5.
+
 ```
 PK = "ALERTA#<estado>#<shard 0..3>"     SK = "SEV#<severidad>#TS#<medido_en>"
 ```
