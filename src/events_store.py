@@ -1,23 +1,26 @@
-"""Almacén experimental M04; PostgreSQL conserva los endpoints existentes.
+"""Almacén documental M05; PostgreSQL conserva los endpoints existentes.
 
 Las lecturas son append-only. La identidad de una alerta vive en la clave base
 (lectura, umbral), porque una condición sobre un atributo secundario no impone
 unicidad. GSI1 organiza esas alertas por estado, shard, severidad e instante;
-solo la tabla base admite lectura fuerte. Los errores de boto3 se propagan para
-que el consumidor distinga duplicados, tamaño excedido y fallos de conexión.
+solo la tabla base admite lectura fuerte. Se valida antes de escribir; los
+duplicados y fallos de conexión conservan sus códigos de boto3.
 """
 
 import hashlib
+import json
 import os
 import secrets
 import time
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, DecimalException
+from pathlib import Path
 from typing import Iterator
 from urllib.parse import urlsplit
 
 import boto3
 from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.types import DYNAMODB_CONTEXT
 from botocore.config import Config
 from botocore.exceptions import (
     ClientError,
@@ -26,33 +29,118 @@ from botocore.exceptions import (
     EndpointConnectionError,
     ReadTimeoutError,
 )
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
-from src.schemas import ConsultaLecturas, LecturaEntrada
+from src.schemas import ConsultaLecturas, LecturaBase, LecturaEntrada
 
 METRICAS = ("cpu", "memoria", "disco_libre", "latencia", "tasa_error")
 ALERT_SHARDS = 4
 GSI_NAME = "GSI1"
+MAX_ITEM_BYTES = 409600
+INDEXES_PATH = Path(__file__).resolve().parents[1] / "db" / "nosql" / "indexes.json"
 _ESTADOS = ("abierta", "reconocida", "cerrada")
 _SEVERIDAD = {"advertencia": 1, "critica": 2}
 _LECTURA = TypeAdapter(LecturaEntrada)
-_BASE_KEYS = [{"AttributeName": "PK", "KeyType": "HASH"}, {"AttributeName": "SK", "KeyType": "RANGE"}]
-_INDEX_KEYS = [{"AttributeName": "GSI1PK", "KeyType": "HASH"}, {"AttributeName": "GSI1SK", "KeyType": "RANGE"}]
+_TRANSICIONES = {"abierta": {"reconocida", "cerrada"}, "reconocida": {"cerrada"}, "cerrada": set()}
+
+
+class DocumentoInvalido(ValueError):
+    """El documento rompe el contrato; no se efectuó la escritura."""
+
+
+class DocumentoDemasiadoGrande(DocumentoInvalido):
+    """Nombres y valores del item exceden los 409.600 bytes."""
+
+
+class AlertaNoExiste(LookupError):
+    """No existe el par (lectura_id, umbral_id) solicitado."""
+
+
+class TransicionAlertaInvalida(ValueError):
+    """El estado solicitado retrocede en el ciclo de vida de la alerta."""
+
+
+class ConflictoAlerta(RuntimeError):
+    """Otros escritores impidieron completar el cambio condicional."""
+
+
+def _utf8(value: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise DocumentoInvalido("La cadena debe ser UTF-8 válido.") from exc
+
+
+def _number(value) -> Decimal:
+    try:
+        number = DYNAMODB_CONTEXT.create_decimal(value)
+    except (DecimalException, TypeError, ValueError) as exc:
+        raise DocumentoInvalido("valor fuera de la precisión o rango numérico de DynamoDB.") from exc
+    if not number.is_finite() or (number and not Decimal("1E-130") <= abs(number) <= Decimal("9." + "9" * 37 + "E+125")):
+        raise DocumentoInvalido("valor debe ser finito y representable como número de DynamoDB.")
+    return number
+
+
+def estimate_item_size(item: dict) -> int:
+    """Estima items planos S/N; los bytes numéricos son aproximados según AWS.
+
+    No incluye el overhead de facturación de 100 bytes ni el texto del JSON.
+    DynamoDB sigue arbitrando la frontera exacta.
+    """
+    size = 0
+    for name, value in item.items():
+        size += _utf8(name)
+        if isinstance(value, str):
+            size += _utf8(value)
+        elif type(value) is int or isinstance(value, Decimal):
+            number = _number(value)
+            digits = list(number.as_tuple().digits)
+            while len(digits) > 1 and digits[-1] == 0:
+                digits.pop()
+            size += (len(digits) + 1) // 2 + 1 + int(number < 0)
+        else:
+            raise DocumentoInvalido(f"{name}: se requiere una cadena o un número; sin conversión implícita.")
+    return size
+
+
+def _validate_item_size(item: dict) -> None:
+    estimate = estimate_item_size(item)
+    # AWS documenta el tamaño numérico como aproximado. Rechazar sólo cuando
+    # incluso la cota mínima (un byte por número) supera el límite; el motor
+    # resuelve los pocos bytes de incertidumbre sin escrituras parciales.
+    minimum = sum(_utf8(name) + (_utf8(value) if isinstance(value, str) else 1)
+                  for name, value in item.items())
+    if minimum > MAX_ITEM_BYTES:
+        raise DocumentoDemasiadoGrande(f"documento sobre el límite de {MAX_ITEM_BYTES} bytes (estimado: {estimate}).")
+
+
+def _write(operation, **arguments) -> dict:
+    try:
+        return operation(**arguments)
+    except ClientError as exc:
+        error = exc.response["Error"]
+        message = error.get("Message", "").lower()
+        if error["Code"] == "ValidationException" and ("item size" in message or "item has exceeded" in message):
+            raise DocumentoDemasiadoGrande(f"documento sobre el límite de {MAX_ITEM_BYTES} bytes: {error.get('Message', '')}") from exc
+        raise
 
 
 def _id(value: int) -> str:
     if type(value) is not int or not 1 <= value <= 9223372036854775807:
-        raise ValueError("El identificador debe ser un entero positivo de 64 bits.")
+        raise DocumentoInvalido("El identificador debe ser un entero positivo de 64 bits.")
     return f"{value:019d}"
 
 
 def _utc(value: str | datetime) -> str:
     if isinstance(value, str):
         if "T" not in value:
-            raise ValueError("Usa una fecha ISO 8601 con T y zona horaria.")
-        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            raise DocumentoInvalido("Usa una fecha ISO 8601 con T y zona horaria.")
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise DocumentoInvalido("La fecha debe ser ISO 8601 válida con zona horaria.") from exc
     if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
-        raise ValueError("La fecha debe incluir zona horaria.")
+        raise DocumentoInvalido("La fecha debe incluir zona horaria.")
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
@@ -96,7 +184,11 @@ class EventsStore:
         self.table = resource.Table(self.table_name)
 
     def ensure_table(self) -> dict:
-        """Crea la tabla si falta, espera ACTIVE y rechaza esquemas incompatibles."""
+        """Crea/compara la tabla contra indexes.json, sin modificar datos."""
+        declared = json.loads(INDEXES_PATH.read_text(encoding="utf-8"))
+        spec = declared["table"]
+        indexes = [{key: index[key] for key in ("IndexName", "KeySchema", "Projection")}
+                   for index in spec["GlobalSecondaryIndexes"]]
         client = self.resource.meta.client
         try:
             client.describe_table(TableName=self.table_name)
@@ -106,60 +198,73 @@ class EventsStore:
             try:
                 client.create_table(
                     TableName=self.table_name,
-                    KeySchema=_BASE_KEYS,
-                    AttributeDefinitions=[{"AttributeName": name, "AttributeType": "S"} for name in ("PK", "SK", "GSI1PK", "GSI1SK")],
-                    BillingMode="PAY_PER_REQUEST",
-                    GlobalSecondaryIndexes=[{"IndexName": GSI_NAME, "KeySchema": _INDEX_KEYS, "Projection": {"ProjectionType": "ALL"}}],
+                    KeySchema=spec["KeySchema"],
+                    AttributeDefinitions=spec["AttributeDefinitions"],
+                    BillingMode=spec["BillingMode"],
+                    GlobalSecondaryIndexes=indexes,
                 )
             except ClientError as concurrent:
                 if concurrent.response["Error"]["Code"] != "ResourceInUseException":
                     raise
         client.get_waiter("table_exists").wait(TableName=self.table_name, WaiterConfig={"Delay": 1, "MaxAttempts": 30})
         description = client.describe_table(TableName=self.table_name)["Table"]
-        keys = lambda schema: {(entry["AttributeName"], entry["KeyType"]) for entry in schema}
-        index = next((index for index in description.get("GlobalSecondaryIndexes", []) if index["IndexName"] == GSI_NAME), None)
-        attributes = {entry["AttributeName"]: entry["AttributeType"] for entry in description["AttributeDefinitions"]}
-        if (keys(description["KeySchema"]) != keys(_BASE_KEYS)
-                or index is None or keys(index["KeySchema"]) != keys(_INDEX_KEYS)
-                or index["Projection"]["ProjectionType"] != "ALL"
-                or any(attributes.get(name) != "S" for name in ("PK", "SK", "GSI1PK", "GSI1SK"))):
-            raise ValueError("La tabla existente no tiene PK/SK y GSI1 compatibles con M04.")
-        if index.get("IndexStatus") != "ACTIVE":
-            raise ValueError("GSI1 todavía no está ACTIVE; reintenta cuando termine su creación.")
+
+        def pairs(entries, value):
+            return sorted((entry["AttributeName"], entry[value]) for entry in entries)
+
+        def index_shape(entries):
+            return sorted((index["IndexName"], pairs(index["KeySchema"], "KeyType"),
+                           index["Projection"]["ProjectionType"],
+                           sorted(index["Projection"].get("NonKeyAttributes", []))) for index in entries)
+
+        actual_indexes = description.get("GlobalSecondaryIndexes", [])
+        if (pairs(description["KeySchema"], "KeyType") != pairs(spec["KeySchema"], "KeyType")
+                or pairs(description["AttributeDefinitions"], "AttributeType") != pairs(spec["AttributeDefinitions"], "AttributeType")
+                or index_shape(actual_indexes) != index_shape(indexes)
+                or description.get("LocalSecondaryIndexes")):
+            raise ValueError("La tabla existente no coincide con los índices declarados en db/nosql/indexes.json.")
+        if description.get("TableStatus") != "ACTIVE" or any(index.get("IndexStatus") != "ACTIVE" for index in actual_indexes):
+            raise ValueError("La tabla o sus índices todavía no están ACTIVE; reintenta cuando termine su creación.")
         return description
 
     @staticmethod
     def build_lectura(lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None) -> dict:
-        """Valida el contrato relacional; payload sintético permite medir 400 KiB.
-
-        El límite de tamaño lo valida DynamoDB, incluyendo nombres y claves;
-        no se aproxima mediante el tamaño del JSON. Los números usan Decimal.
-        """
+        """Valida el contrato sin coerción y estima tamaño antes de escribir."""
         identity = _id(lectura_id)
-        validated = _LECTURA.validate_python(lectura)
+        if isinstance(lectura, LecturaBase):
+            # También revalidar modelos mutados o creados con model_construct.
+            lectura = lectura.model_dump()
+        if not isinstance(lectura, dict):
+            raise DocumentoInvalido("lectura debe ser un documento o un modelo LecturaEntrada.")
+        try:
+            validated = _LECTURA.validate_python(lectura)
+        except ValidationError as exc:
+            raise DocumentoInvalido(str(exc)) from exc
         instant = _utc(validated.medido_en)
         item = {
             "PK": f"EQ#{validated.equipo_codigo}#{validated.metrica}",
             "SK": f"TS#{instant}#{identity}",
             "entidad": "lectura", "lectura_id": lectura_id,
             "equipo_codigo": validated.equipo_codigo, "metrica": validated.metrica,
-            "unidad": validated.unidad, "valor": Decimal(str(validated.valor)),
+            "unidad": validated.unidad, "valor": _number(str(validated.valor)),
             "medido_en": instant,
         }
         if payload is not None:
             if not isinstance(payload, str):
-                raise ValueError("payload debe ser una cadena sintética.")
+                raise DocumentoInvalido("payload debe ser una cadena sintética.")
             item["payload"] = payload
+        _validate_item_size(item)
         return item
 
     def put_lectura(self, lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None) -> dict:
-        return self.table.put_item(
+        return _write(self.table.put_item,
             Item=self.build_lectura(lectura_id, lectura, payload=payload),
             ConditionExpression="attribute_not_exists(PK)", ReturnConsumedCapacity="TOTAL",
         )
 
     @staticmethod
-    def build_alerta(*, lectura_id: int, umbral_id: int, estado: str, severidad: str, medido_en: str | datetime) -> dict:
+    def build_alerta(*, lectura_id: int, umbral_id: int, estado: str, severidad: str,
+                     medido_en: str | datetime, cerrada_en: str | datetime | None = None) -> dict:
         """Identidad inmutable en la tabla; estado mutable y prioridad en GSI1.
 
         La clave del ADR basada en estado no impediría duplicar (lectura, umbral).
@@ -167,22 +272,32 @@ class EventsStore:
         El rango numérico hace que critica preceda advertencia al leer descendente.
         """
         lectura, umbral = _id(lectura_id), _id(umbral_id)
-        if estado not in _ESTADOS or severidad not in _SEVERIDAD:
-            raise ValueError("Estado o severidad de alerta inválidos.")
+        if not isinstance(estado, str) or estado not in _ESTADOS:
+            raise DocumentoInvalido("estado debe ser abierta, reconocida o cerrada.")
+        if not isinstance(severidad, str) or severidad not in _SEVERIDAD:
+            raise DocumentoInvalido("severidad debe ser advertencia o critica.")
+        if (estado == "cerrada") != (cerrada_en is not None):
+            raise DocumentoInvalido("cerrada_en debe estar presente si y solo si estado es cerrada.")
         instant = _utc(medido_en)
         identity = f"LECTURA#{lectura}#UMBRAL#{umbral}"
         shard = int.from_bytes(hashlib.sha256(identity.encode("utf-8")).digest()[:8], "big") % ALERT_SHARDS
-        return {
+        item = {
             "PK": f"LECTURA#{lectura}", "SK": f"UMBRAL#{umbral}",
             "GSI1PK": f"ALERTA#{estado}#{shard}",
             "GSI1SK": f"SEV#{_SEVERIDAD[severidad]}#TS#{instant}#{identity}",
             "entidad": "alerta", "lectura_id": lectura_id, "umbral_id": umbral_id,
             "estado": estado, "severidad": severidad, "medido_en": instant, "shard": shard,
         }
+        if cerrada_en is not None:
+            item["cerrada_en"] = _utc(cerrada_en)
+        _validate_item_size(item)
+        return item
 
-    def put_alerta(self, *, lectura_id: int, umbral_id: int, estado: str, severidad: str, medido_en: str | datetime) -> dict:
-        return self.table.put_item(
-            Item=self.build_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado=estado, severidad=severidad, medido_en=medido_en),
+    def put_alerta(self, *, lectura_id: int, umbral_id: int, estado: str, severidad: str,
+                   medido_en: str | datetime, cerrada_en: str | datetime | None = None) -> dict:
+        return _write(self.table.put_item,
+            Item=self.build_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado=estado, severidad=severidad,
+                                   medido_en=medido_en, cerrada_en=cerrada_en),
             ConditionExpression="attribute_not_exists(PK)", ReturnConsumedCapacity="TOTAL",
         )
 
@@ -258,10 +373,98 @@ class EventsStore:
             arguments["ExclusiveStartKey"] = exclusive_start_key
         return self.table.query(**arguments)
 
-    def get_alerta(self, lectura_id: int, umbral_id: int, *, consistent_read: bool = True) -> dict:
-        """Lectura fuerte por identidad, disponible para reevaluar alertas Q4."""
-        return self.table.get_item(Key={"PK": f"LECTURA#{_id(lectura_id)}", "SK": f"UMBRAL#{_id(umbral_id)}"},
-                                   ConsistentRead=consistent_read, ReturnConsumedCapacity="TOTAL")
+    def get_lectura(self, equipo_codigo: str, metrica: str, medido_en: str | datetime,
+                    lectura_id: int, *, consistent_read: bool = True) -> dict | None:
+        """Lectura por clave completa; no existe una búsqueda por id solo."""
+        query = ConsultaLecturas(equipo=equipo_codigo, metrica=metrica)
+        if query.metrica is None:
+            raise DocumentoInvalido("get_lectura requiere una métrica.")
+        key = {"PK": f"EQ#{query.equipo}#{query.metrica}", "SK": f"TS#{_utc(medido_en)}#{_id(lectura_id)}"}
+        return self.table.get_item(Key=key, ConsistentRead=consistent_read,
+                                   ReturnConsumedCapacity="TOTAL").get("Item")
+
+    @staticmethod
+    def _alerta_key(lectura_id: int, umbral_id: int) -> dict:
+        return {"PK": f"LECTURA#{_id(lectura_id)}", "SK": f"UMBRAL#{_id(umbral_id)}"}
+
+    def get_alerta(self, lectura_id: int, umbral_id: int, *, consistent_read: bool = True) -> dict | None:
+        """Item o None; lectura fuerte por identidad para reevaluar alertas Q4."""
+        return self.table.get_item(Key=self._alerta_key(lectura_id, umbral_id),
+                                   ConsistentRead=consistent_read, ReturnConsumedCapacity="TOTAL").get("Item")
+
+    @staticmethod
+    def _validate_alerta(item: dict, lectura_id: int, umbral_id: int) -> None:
+        """Revalida el documento completo, incluidos campos/claves generados."""
+        try:
+            expected = EventsStore.build_alerta(
+                lectura_id=lectura_id, umbral_id=umbral_id, estado=item["estado"],
+                severidad=item["severidad"], medido_en=item["medido_en"], cerrada_en=item.get("cerrada_en"),
+            )
+        except KeyError as exc:
+            raise DocumentoInvalido(f"Falta el campo obligatorio {exc.args[0]} en la alerta.") from exc
+        for field in set(item) | set(expected):
+            if field not in expected:
+                raise DocumentoInvalido(f"Campo extra {field} en la alerta.")
+            if field not in item:
+                raise DocumentoInvalido(f"Falta el campo obligatorio {field} en la alerta.")
+            if item[field] != expected[field] or (type(item[field]) is bool and not isinstance(expected[field], bool)):
+                raise DocumentoInvalido(f"{field} no coincide con el contrato/identidad de la alerta.")
+
+    def actualizar_estado_alerta(self, lectura_id: int, umbral_id: int, estado: str,
+                                 *, cerrada_en: str | datetime | None = None) -> dict:
+        """CAS atómico; estado repetido conserva el documento sin escribir."""
+        key = self._alerta_key(lectura_id, umbral_id)
+        if not isinstance(estado, str) or estado not in _ESTADOS:
+            raise DocumentoInvalido("estado debe ser abierta, reconocida o cerrada.")
+        if cerrada_en is not None and estado != "cerrada":
+            raise DocumentoInvalido("cerrada_en solo es válida al solicitar estado cerrada.")
+        closure = _utc(cerrada_en) if cerrada_en is not None else None
+        current = self.get_alerta(lectura_id, umbral_id, consistent_read=True)
+        for attempt in range(3):
+            if current is None:
+                raise AlertaNoExiste(f"No existe la alerta de lectura_id={lectura_id}, umbral_id={umbral_id}.")
+            self._validate_alerta(current, lectura_id, umbral_id)
+            previous = current["estado"]
+            if previous == estado:
+                return current
+            if estado not in _TRANSICIONES[previous]:
+                raise TransicionAlertaInvalida(f"Transición de alerta inválida: {previous} → {estado}.")
+            if estado == "cerrada" and closure is None:
+                closure = _utc(datetime.now(timezone.utc))
+            candidate = self.build_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado=estado,
+                                          severidad=current["severidad"], medido_en=current["medido_en"],
+                                          cerrada_en=closure)
+            expression = "SET estado = :estado, GSI1PK = :gsi"
+            values = {":estado": estado, ":estado_anterior": previous, ":gsi": candidate["GSI1PK"]}
+            if estado == "cerrada":
+                expression += ", cerrada_en = :cierre"
+                values[":cierre"] = candidate["cerrada_en"]
+            try:
+                response = _write(self.table.update_item, Key=key, UpdateExpression=expression,
+                                  ConditionExpression="attribute_exists(PK) AND estado = :estado_anterior",
+                                  ExpressionAttributeValues=values, ReturnValues="ALL_NEW",
+                                  ReturnConsumedCapacity="TOTAL")
+                return response["Attributes"]
+            except ClientError as exc:
+                if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    raise
+                # El GSI es eventual: decidir siempre con la tabla base fuerte.
+                current = self.get_alerta(lectura_id, umbral_id, consistent_read=True)
+        # Clasificar también la última carrera antes de informar contención.
+        if current is None:
+            raise AlertaNoExiste(f"La alerta de lectura_id={lectura_id}, umbral_id={umbral_id} fue eliminada.")
+        self._validate_alerta(current, lectura_id, umbral_id)
+        if current["estado"] == estado:
+            return current
+        if estado not in _TRANSICIONES[current["estado"]]:
+            raise TransicionAlertaInvalida(f"Transición de alerta inválida: {current['estado']} → {estado}.")
+        raise ConflictoAlerta("La alerta cambió durante tres intentos condicionales; reintenta la operación.")
+
+    def delete_alerta(self, lectura_id: int, umbral_id: int) -> bool:
+        """Baja idempotente: True si existía; False si ya estaba ausente."""
+        response = self.table.delete_item(Key=self._alerta_key(lectura_id, umbral_id),
+                                          ReturnValues="ALL_OLD", ReturnConsumedCapacity="TOTAL")
+        return "Attributes" in response
 
 
 def main() -> None:
