@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
+COPY db/nosql/indexes.json ./db/nosql/indexes.json
 
 EXPOSE 8001
 
