@@ -1,0 +1,55 @@
+{
+  "schema": "m05-document-store/1",
+  "generated_at": "2026-10-04T18:52:03.934058+00:00",
+  "synthetic_fixtures": true,
+  "source": "tests/test_m05_document_store.py contra DynamoDB Local (docker-compose.yml)",
+  "indexes_declared_in": "db/nosql/indexes.json",
+  "max_item_bytes": 409600,
+  "queries_use_query_not_scan": true,
+  "pytest": {
+    "total": 7,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0,
+    "tests": [
+      {
+        "name": "test_caso_normal_alta_lectura_alerta_cambio_estado_borrado",
+        "passed": true
+      },
+      {
+        "name": "test_limite_item_al_filo_del_tamano_maximo",
+        "passed": true
+      },
+      {
+        "name": "test_limite_repetir_la_misma_operacion_es_idempotente",
+        "passed": true
+      },
+      {
+        "name": "test_duplicado_el_segundo_put_no_sobrescribe",
+        "passed": true
+      },
+      {
+        "name": "test_ausencia_get_update_delete_de_algo_inexistente",
+        "passed": true
+      },
+      {
+        "name": "test_fallo_declarado_documento_invalido_no_escribe_nada",
+        "passed": true
+      },
+      {
+        "name": "test_q1_a_q4_usan_query_a_indice_declarado_nunca_scan",
+        "passed": true
+      }
+    ]
+  },
+  "coverage": {
+    "normal": true,
+    "limite_1_tamano_maximo": true,
+    "limite_2_idempotencia": true,
+    "duplicado": true,
+    "ausencia": true,
+    "fallo_declarado": true,
+    "q1_a_q4_query_sin_scan": true
+  },
+  "all_required_cases_passed": true
+}

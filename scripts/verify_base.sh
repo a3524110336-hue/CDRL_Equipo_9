@@ -12,6 +12,7 @@ required_files=(
   ".github/workflows/cdrl-feedback.yml"
   "evidence/m03-least-privilege.json"
   "evidence/m04-nosql-decision.json"
+  "evidence/m05-document-store.json"
 )
 
 for required in "${required_files[@]}"; do
@@ -23,7 +24,7 @@ import json
 from pathlib import Path
 
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
-for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json"):
+for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json"):
     payload = json.loads(Path(name).read_text(encoding="utf-8"))
     missing = sorted(required.difference(payload))
     if missing:

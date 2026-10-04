@@ -1,0 +1,24 @@
+{
+  "assignmentId": "m05-document-store",
+  "commitSha": "COMPLETAR_SHA_DE_40_CARACTERES",
+  "tag": "week-05-final",
+  "commands": ["make setup", "make verify", "make run"],
+  "results": {
+    "store": "Almacen documental de eventos CDRL sobre DynamoDB (src/events_store.py, docs/ADR-005-almacen-documental.md). Documentos de lectura y alerta con contrato explicito; campo, tipo o valor invalido se rechaza antes de escribir (DocumentoInvalido).",
+    "indexes": "Las consultas Q1-Q4 estan declaradas en db/nosql/indexes.json y usan Query sobre la tabla base o GSI1; ninguna usa Scan ni FilterExpression. ensure_table() compara la tabla real contra ese archivo.",
+    "crud": "get_lectura por clave completa, actualizar_estado_alerta (abierta/reconocida/cerrada, condicional e idempotente al repetir el mismo estado) y delete_alerta idempotente (ReturnValues=ALL_OLD).",
+    "tests": "tests/test_m05_document_store.py contra DynamoDB Local: 1 caso normal (alta, lectura, cambio de estado, borrado), 2 casos limite (item justo en 409600 bytes medidos por DynamoDB; repetir la misma operacion es idempotente), 1 caso de duplicado (el segundo put no sobrescribe), 1 caso de ausencia (get/update/delete de algo inexistente), 1 fallo declarado (documento invalido rechazado sin escribir nada) y 1 prueba de que Q1-Q4 usan Query a un indice declarado, nunca Scan. Resultado machine-readable en artifacts/m05-document-store.json (generado por scripts/build_m05_artifact.py).",
+    "secrets": "Sin credenciales, tokens ni cadenas de conexion versionadas; DYNAMODB_LOCAL genera firmas efimeras en memoria. Las pruebas usan una tabla sintetica aislada por sesion, creada y borrada por el propio test."
+  },
+  "assumptions": [
+    "El limite de 409600 bytes (400 KB) y su forma de medicion (nombres + valores de atributos, no el JSON) provienen de la documentacion de DynamoDB citada en docs/EVENTS-STORE.md.",
+    "Las pruebas corren contra una tabla DynamoDB Local real (docker-compose.yml), no un emulador en memoria; exportan DYNAMODB_ENDPOINT, AWS_REGION y DYNAMODB_LOCAL porque verify_base.sh no las hereda al runner de pytest.",
+    "AWS Academy Learner Lab se usara solo si el servicio esta habilitado; el respaldo es Docker Compose con DynamoDB Local."
+  ],
+  "limitations": [
+    "Los umbrales vigentes y la reconciliacion completa de alertas siguen en PostgreSQL; el almacen documental no los replica (ver ADR-005, Consecuencias).",
+    "La prueba del limite de tamano usa estimate_item_size para construir el payload exacto, pero quien arbitra la frontera real es DynamoDB; el caso limite se valida contra el motor, no solo contra la estimacion.",
+    "Las pruebas usan fixtures sinteticos y una tabla aislada por sesion de pytest, creada y eliminada por el propio archivo de pruebas.",
+    "commitSha nombra el commit verificado en verde; el SHA exacto de la entrega es el que resuelve el tag week-05-final (mismo patron que evidence/m04-nosql-decision.json)."
+  ]
+}
