@@ -106,11 +106,11 @@ def main():
         # Requiere una tabla dedicada sin escritores concurrentes.
         with store.table.batch_writer() as batch:
             for lectura_id, lectura in records():
-                batch.put_item(Item=store.build_lectura(lectura_id, lectura))
+                batch.put_item(Item=store.build_lectura(lectura_id, lectura, fuente="lote"))
                 result["lecturas_insertadas"] += 1
     else:
         for lectura_id, lectura in records():
-            conditional(store.put_lectura, "lecturas", lectura_id=lectura_id, lectura=lectura)
+            conditional(store.put_lectura, "lecturas", lectura_id=lectura_id, lectura=lectura, fuente="lote")
     result["lecturas_seconds"] = round(perf_counter() - started, 6)
     for alert in alerts:
         conditional(store.put_alerta, "alertas", **alert)

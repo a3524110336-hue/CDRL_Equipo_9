@@ -1,4 +1,4 @@
-"""Almacén documental M05; PostgreSQL conserva los endpoints existentes.
+"""Almacén documental M05/M06; PostgreSQL conserva los endpoints existentes.
 
 Las lecturas son append-only. La identidad de una alerta vive en la clave base
 (lectura, umbral), porque una condición sobre un atributo secundario no impone
@@ -10,12 +10,14 @@ duplicados y fallos de conexión conservan sus códigos de boto3.
 import hashlib
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
 from decimal import Decimal, DecimalException
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 import boto3
@@ -38,6 +40,7 @@ ALERT_SHARDS = 4
 GSI_NAME = "GSI1"
 MAX_ITEM_BYTES = 409600
 INDEXES_PATH = Path(__file__).resolve().parents[1] / "db" / "nosql" / "indexes.json"
+AUDIT_PATH = INDEXES_PATH.with_name("audit-table.json")
 _ESTADOS = ("abierta", "reconocida", "cerrada")
 _SEVERIDAD = {"advertencia": 1, "critica": 2}
 _LECTURA = TypeAdapter(LecturaEntrada)
@@ -50,6 +53,34 @@ class DocumentoInvalido(ValueError):
 
 class DocumentoDemasiadoGrande(DocumentoInvalido):
     """Nombres y valores del item exceden los 409.600 bytes."""
+
+
+class VersionDesconocida(DocumentoInvalido):
+    """Versión de lectura que este cliente no sabe interpretar."""
+
+
+class AuditoriaInvalida(DocumentoInvalido):
+    """Registro fuera del contrato seguro de auditoría."""
+
+
+def normalizar_lectura(item: dict) -> dict:
+    """Upcast puro: nunca reescribe el documento persistido."""
+    result = dict(item)
+    if "schemaVersion" not in item:
+        result.update(schemaVersion=1, fuente="desconocida", registrado_en=None)
+    elif (isinstance(item["schemaVersion"], bool)
+          or not isinstance(item["schemaVersion"], (int, Decimal))
+          or item["schemaVersion"] != 2):
+        raise VersionDesconocida("schemaVersion no soportada.")
+    else:
+        if item.get("fuente") not in ("api", "lote", "fixture"):
+            raise DocumentoInvalido("fuente v2 inválida o ausente.")
+        if not isinstance(item.get("registrado_en"), str):
+            raise DocumentoInvalido("registrado_en v2 obligatorio.")
+        _utc(item["registrado_en"])
+        if datetime.fromisoformat(item["registrado_en"].replace("Z", "+00:00")).utcoffset().total_seconds() != 0:
+            raise DocumentoInvalido("registrado_en requiere UTC.")
+    return result
 
 
 class AlertaNoExiste(LookupError):
@@ -154,7 +185,7 @@ class EventsStore:
     ``resource`` permite inyectar un recurso boto3 para pruebas aisladas.
     """
 
-    def __init__(self, table_name: str | None = None, *, resource=None):
+    def __init__(self, table_name: str | None = None, *, resource=None, audit_table_name: str | None = None):
         self.table_name = table_name or os.getenv("DYNAMODB_TABLE", "cdrl_eventos")
         if resource is None:
             endpoint = os.getenv("DYNAMODB_ENDPOINT", "").strip()
@@ -182,22 +213,29 @@ class EventsStore:
             )
         self.resource = resource
         self.table = resource.Table(self.table_name)
+        self.audit_table_name = audit_table_name or os.getenv("DYNAMODB_AUDIT_TABLE", "cdrl_auditoria")
+        self.audit_table = resource.Table(self.audit_table_name)
 
     def ensure_table(self) -> dict:
-        """Crea/compara la tabla contra indexes.json, sin modificar datos."""
-        declared = json.loads(INDEXES_PATH.read_text(encoding="utf-8"))
+        """Crea/compara eventos y auditoría contra sus declaraciones."""
+        description = self._ensure_declared_table(self.table_name, INDEXES_PATH)
+        self._ensure_declared_table(self.audit_table_name, AUDIT_PATH)
+        return description
+
+    def _ensure_declared_table(self, table_name: str, path: Path) -> dict:
+        declared = json.loads(path.read_text(encoding="utf-8"))
         spec = declared["table"]
         indexes = [{key: index[key] for key in ("IndexName", "KeySchema", "Projection")}
                    for index in spec["GlobalSecondaryIndexes"]]
         client = self.resource.meta.client
         try:
-            client.describe_table(TableName=self.table_name)
+            client.describe_table(TableName=table_name)
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "ResourceNotFoundException":
                 raise
             try:
                 client.create_table(
-                    TableName=self.table_name,
+                    TableName=table_name,
                     KeySchema=spec["KeySchema"],
                     AttributeDefinitions=spec["AttributeDefinitions"],
                     BillingMode=spec["BillingMode"],
@@ -206,8 +244,8 @@ class EventsStore:
             except ClientError as concurrent:
                 if concurrent.response["Error"]["Code"] != "ResourceInUseException":
                     raise
-        client.get_waiter("table_exists").wait(TableName=self.table_name, WaiterConfig={"Delay": 1, "MaxAttempts": 30})
-        description = client.describe_table(TableName=self.table_name)["Table"]
+        client.get_waiter("table_exists").wait(TableName=table_name, WaiterConfig={"Delay": 1, "MaxAttempts": 30})
+        description = client.describe_table(TableName=table_name)["Table"]
 
         def pairs(entries, value):
             return sorted((entry["AttributeName"], entry[value]) for entry in entries)
@@ -222,15 +260,17 @@ class EventsStore:
                 or pairs(description["AttributeDefinitions"], "AttributeType") != pairs(spec["AttributeDefinitions"], "AttributeType")
                 or index_shape(actual_indexes) != index_shape(indexes)
                 or description.get("LocalSecondaryIndexes")):
-            raise ValueError("La tabla existente no coincide con los índices declarados en db/nosql/indexes.json.")
+            raise ValueError(f"La tabla existente no coincide con los índices declarados en {path.name}.")
         if description.get("TableStatus") != "ACTIVE" or any(index.get("IndexStatus") != "ACTIVE" for index in actual_indexes):
             raise ValueError("La tabla o sus índices todavía no están ACTIVE; reintenta cuando termine su creación.")
         return description
 
     @staticmethod
-    def build_lectura(lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None) -> dict:
+    def build_lectura(lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None, fuente: str = "api") -> dict:
         """Valida el contrato sin coerción y estima tamaño antes de escribir."""
         identity = _id(lectura_id)
+        if fuente not in ("api", "lote", "fixture"):
+            raise DocumentoInvalido("fuente debe ser api, lote o fixture.")
         if isinstance(lectura, LecturaBase):
             # También revalidar modelos mutados o creados con model_construct.
             lectura = lectura.model_dump()
@@ -245,6 +285,7 @@ class EventsStore:
             "PK": f"EQ#{validated.equipo_codigo}#{validated.metrica}",
             "SK": f"TS#{instant}#{identity}",
             "entidad": "lectura", "lectura_id": lectura_id,
+            "schemaVersion": 2, "fuente": fuente, "registrado_en": _utc(datetime.now(timezone.utc)),
             "equipo_codigo": validated.equipo_codigo, "metrica": validated.metrica,
             "unidad": validated.unidad, "valor": _number(str(validated.valor)),
             "medido_en": instant,
@@ -256,9 +297,9 @@ class EventsStore:
         _validate_item_size(item)
         return item
 
-    def put_lectura(self, lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None) -> dict:
+    def put_lectura(self, lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None, fuente: str = "api") -> dict:
         return _write(self.table.put_item,
-            Item=self.build_lectura(lectura_id, lectura, payload=payload),
+            Item=self.build_lectura(lectura_id, lectura, payload=payload, fuente=fuente),
             ConditionExpression="attribute_not_exists(PK)", ReturnConsumedCapacity="TOTAL",
         )
 
@@ -318,7 +359,9 @@ class EventsStore:
                          ConsistentRead=consistent_read, ReturnConsumedCapacity="TOTAL")
         if exclusive_start_key:
             arguments["ExclusiveStartKey"] = exclusive_start_key
-        return self.table.query(**arguments)
+        page = self.table.query(**arguments)
+        page["Items"] = [normalizar_lectura(item) for item in page["Items"]]
+        return page
 
     def iter_lecturas(self, equipo_codigo: str, metrica: str, *, desde=None, hasta=None,
                       limite: int = 100, consistent_read: bool = False) -> Iterator[dict]:
@@ -380,12 +423,105 @@ class EventsStore:
         if query.metrica is None:
             raise DocumentoInvalido("get_lectura requiere una métrica.")
         key = {"PK": f"EQ#{query.equipo}#{query.metrica}", "SK": f"TS#{_utc(medido_en)}#{_id(lectura_id)}"}
-        return self.table.get_item(Key=key, ConsistentRead=consistent_read,
+        item = self.table.get_item(Key=key, ConsistentRead=consistent_read,
                                    ReturnConsumedCapacity="TOTAL").get("Item")
+        return normalizar_lectura(item) if item is not None else None
 
     @staticmethod
     def _alerta_key(lectura_id: int, umbral_id: int) -> dict:
         return {"PK": f"LECTURA#{_id(lectura_id)}", "SK": f"UMBRAL#{_id(umbral_id)}"}
+
+    @staticmethod
+    def build_auditoria(registro: dict) -> dict:
+        """Valida la lista blanca antes de derivar las claves internas."""
+        fields = json.loads(AUDIT_PATH.read_text(encoding="utf-8"))["fields"]
+        if not isinstance(registro, dict):
+            raise AuditoriaInvalida("La auditoría requiere un documento.")
+        item = dict(registro)
+        allowed = set(fields["required"] + fields["optional"])
+        if set(item) - allowed:
+            raise AuditoriaInvalida("Campo fuera de la lista blanca.")
+        item.setdefault("schemaVersion", 1)
+        item.setdefault("operacion_id", uuid4().hex)
+        item.setdefault("ocurrido_en", _utc(datetime.now(timezone.utc)))
+        if (isinstance(item["schemaVersion"], bool)
+                or not isinstance(item["schemaVersion"], (int, Decimal)) or item["schemaVersion"] != 1):
+            raise AuditoriaInvalida("schemaVersion de auditoría debe ser 1.")
+        for name in fields["required"]:
+            if name not in ("PK", "SK") and name not in item:
+                raise AuditoriaInvalida(f"Falta {name}.")
+        for name, choices in fields["enums"].items():
+            if name in item and (not isinstance(item[name], str) or item[name] not in choices):
+                raise AuditoriaInvalida(f"{name} inválido.")
+        for name, pattern in fields["patterns"].items():
+            if name in item and (not isinstance(item[name], str) or re.fullmatch(pattern, item[name]) is None):
+                raise AuditoriaInvalida(f"{name} inválido.")
+        if "conteo" in item and (type(item["conteo"]) is not int or item["conteo"] < 0):
+            raise AuditoriaInvalida("conteo debe ser un entero no negativo.")
+        secret = re.compile(r"AKIA[0-9A-Z]{16}|://[^\s/:]+:[^\s@]+@|password|secret|token|bearer", re.I)
+        if any(secret.search(value) for value in item.values() if isinstance(value, str)):
+            raise AuditoriaInvalida("Texto prohibido en auditoría.")
+        try:
+            occurred = _utc(item["ocurrido_en"])
+        except DocumentoInvalido as exc:
+            raise AuditoriaInvalida("ocurrido_en inválido.") from exc
+        item["ocurrido_en"] = occurred
+        keys = {"PK": f"AUD#{occurred[:10]}", "SK": f"TS#{occurred}#{item['operacion_id']}"}
+        if any(name in item and item[name] != value for name, value in keys.items()):
+            raise AuditoriaInvalida("Claves de auditoría inconsistentes.")
+        item.update(keys)
+        is_alert = item["operacion"] in ("actualizar_estado_alerta", "delete_alerta")
+        if (item["entidad"] != ("alerta" if is_alert else "lote_lecturas")
+                or not item["clave_afectada"].startswith("LECTURA#" if is_alert else "LOTE#")):
+            raise AuditoriaInvalida("Operación, entidad y clave incompatibles.")
+        return item
+
+    def _audit_writes(self, item: dict) -> list[dict]:
+        identity = f"OP#{item['operacion_id']}"
+        return [{"Put": {"TableName": self.audit_table_name, "Item": record,
+                          "ConditionExpression": "attribute_not_exists(PK)"}}
+                for record in ({"PK": identity, "SK": identity, "operacion_id": item["operacion_id"]}, item)]
+
+    def _transact(self, changes: list[dict], audit: dict) -> dict:
+        try:
+            return self.resource.meta.client.transact_write_items(
+                TransactItems=self._audit_writes(audit) + changes, ReturnConsumedCapacity="TOTAL")
+        except ClientError as exc:
+            reasons = exc.response.get("CancellationReasons", [])
+            if (exc.response["Error"]["Code"] == "TransactionCanceledException"
+                    and any(reason.get("Code") == "ConditionalCheckFailed" for reason in reasons[:2])):
+                raise ClientError({"Error": {"Code": "ConditionalCheckFailedException",
+                                             "Message": "operacion_id ya registrado."}}, "TransactWriteItems") from exc
+            raise
+
+    def registrar_auditoria(self, registro: dict | None = None, **fields) -> dict:
+        if registro is not None and fields:
+            raise AuditoriaInvalida("Usa un documento o campos, sin combinarlos.")
+        return self._transact([], self.build_auditoria(fields if registro is None else registro))
+
+    def query_auditoria_dia(self, dia: str, *, limite: int = 100, exclusive_start_key=None) -> dict:
+        if not isinstance(dia, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia) is None:
+            raise AuditoriaInvalida("día inválido.")
+        datetime.strptime(dia, "%Y-%m-%d")
+        return self._query_auditoria(Key("PK").eq(f"AUD#{dia}"), limite, exclusive_start_key)
+
+    def query_auditoria_clave(self, clave_afectada: str, *, limite: int = 100, exclusive_start_key=None) -> dict:
+        pattern = json.loads(AUDIT_PATH.read_text(encoding="utf-8"))["fields"]["patterns"]["clave_afectada"]
+        if not isinstance(clave_afectada, str) or re.fullmatch(pattern, clave_afectada) is None:
+            raise AuditoriaInvalida("clave_afectada inválida.")
+        return self._query_auditoria(Key("clave_afectada").eq(clave_afectada), limite,
+                                     exclusive_start_key, index="AUD_CLAVE")
+
+    def _query_auditoria(self, condition, limite, cursor, *, index=None):
+        if type(limite) is not int or not 1 <= limite <= 1000:
+            raise AuditoriaInvalida("limite fuera de rango.")
+        arguments = dict(KeyConditionExpression=condition, Limit=limite,
+                         ConsistentRead=index is None, ReturnConsumedCapacity="TOTAL")
+        if index:
+            arguments["IndexName"] = index
+        if cursor:
+            arguments["ExclusiveStartKey"] = cursor
+        return self.audit_table.query(**arguments)
 
     def get_alerta(self, lectura_id: int, umbral_id: int, *, consistent_read: bool = True) -> dict | None:
         """Item o None; lectura fuerte por identidad para reevaluar alertas Q4."""
@@ -411,13 +547,19 @@ class EventsStore:
                 raise DocumentoInvalido(f"{field} no coincide con el contrato/identidad de la alerta.")
 
     def actualizar_estado_alerta(self, lectura_id: int, umbral_id: int, estado: str,
-                                 *, cerrada_en: str | datetime | None = None) -> dict:
+                                 *, cerrada_en: str | datetime | None = None,
+                                 actor_rol: str = "cdrl_ops", operacion_id: str | None = None) -> dict:
         """CAS atómico; estado repetido conserva el documento sin escribir."""
         key = self._alerta_key(lectura_id, umbral_id)
         if not isinstance(estado, str) or estado not in _ESTADOS:
             raise DocumentoInvalido("estado debe ser abierta, reconocida o cerrada.")
         if cerrada_en is not None and estado != "cerrada":
             raise DocumentoInvalido("cerrada_en solo es válida al solicitar estado cerrada.")
+        audit_fields = dict(operacion="actualizar_estado_alerta", actor_rol=actor_rol,
+                            entidad="alerta", clave_afectada=f"{key['PK']}#{key['SK']}", resultado="ok")
+        if operacion_id is not None:
+            audit_fields["operacion_id"] = operacion_id
+        audit_base = self.build_auditoria(audit_fields)
         closure = _utc(cerrada_en) if cerrada_en is not None else None
         current = self.get_alerta(lectura_id, umbral_id, consistent_read=True)
         for attempt in range(3):
@@ -428,6 +570,8 @@ class EventsStore:
             if previous == estado:
                 return current
             if estado not in _TRANSICIONES[previous]:
+                self.registrar_auditoria(dict(audit_base, resultado="rechazada",
+                    codigo_error="TransicionAlertaInvalida", estado_anterior=previous, estado_nuevo=estado))
                 raise TransicionAlertaInvalida(f"Transición de alerta inválida: {previous} → {estado}.")
             if estado == "cerrada" and closure is None:
                 closure = _utc(datetime.now(timezone.utc))
@@ -440,13 +584,16 @@ class EventsStore:
                 expression += ", cerrada_en = :cierre"
                 values[":cierre"] = candidate["cerrada_en"]
             try:
-                response = _write(self.table.update_item, Key=key, UpdateExpression=expression,
-                                  ConditionExpression="attribute_exists(PK) AND estado = :estado_anterior",
-                                  ExpressionAttributeValues=values, ReturnValues="ALL_NEW",
-                                  ReturnConsumedCapacity="TOTAL")
-                return response["Attributes"]
+                audit = self.build_auditoria(dict(audit_base, estado_anterior=previous, estado_nuevo=estado))
+                self._transact([{"Update": dict(TableName=self.table_name, Key=key,
+                    UpdateExpression=expression,
+                    ConditionExpression="attribute_exists(PK) AND estado = :estado_anterior",
+                    ExpressionAttributeValues=values)}], audit)
+                return candidate
             except ClientError as exc:
-                if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                reasons = exc.response.get("CancellationReasons", [])
+                if (exc.response["Error"]["Code"] != "TransactionCanceledException"
+                        or len(reasons) != 3 or reasons[2].get("Code") != "ConditionalCheckFailed"):
                     raise
                 # El GSI es eventual: decidir siempre con la tabla base fuerte.
                 current = self.get_alerta(lectura_id, umbral_id, consistent_read=True)
@@ -457,14 +604,30 @@ class EventsStore:
         if current["estado"] == estado:
             return current
         if estado not in _TRANSICIONES[current["estado"]]:
+            self.registrar_auditoria(dict(audit_base, resultado="rechazada",
+                codigo_error="TransicionAlertaInvalida", estado_anterior=current["estado"], estado_nuevo=estado))
             raise TransicionAlertaInvalida(f"Transición de alerta inválida: {current['estado']} → {estado}.")
         raise ConflictoAlerta("La alerta cambió durante tres intentos condicionales; reintenta la operación.")
 
-    def delete_alerta(self, lectura_id: int, umbral_id: int) -> bool:
-        """Baja idempotente: True si existía; False si ya estaba ausente."""
-        response = self.table.delete_item(Key=self._alerta_key(lectura_id, umbral_id),
-                                          ReturnValues="ALL_OLD", ReturnConsumedCapacity="TOTAL")
-        return "Attributes" in response
+    def delete_alerta(self, lectura_id: int, umbral_id: int, *, actor_rol: str = "cdrl_ops",
+                      operacion_id: str | None = None) -> bool:
+        """Baja y auditoría atómicas; ausencia no genera registro."""
+        key = self._alerta_key(lectura_id, umbral_id)
+        fields = dict(operacion="delete_alerta", actor_rol=actor_rol, entidad="alerta",
+                      clave_afectada=f"{key['PK']}#{key['SK']}", resultado="ok")
+        if operacion_id is not None:
+            fields["operacion_id"] = operacion_id
+        audit = self.build_auditoria(fields)
+        try:
+            self._transact([{"Delete": dict(TableName=self.table_name, Key=key,
+                ConditionExpression="attribute_exists(PK)")}], audit)
+            return True
+        except ClientError as exc:
+            reasons = exc.response.get("CancellationReasons", [])
+            if (exc.response["Error"]["Code"] == "TransactionCanceledException"
+                    and len(reasons) == 3 and reasons[2].get("Code") == "ConditionalCheckFailed"):
+                return False
+            raise
 
 
 def main() -> None:

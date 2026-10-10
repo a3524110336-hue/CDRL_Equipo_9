@@ -7,6 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
 COPY db/nosql/indexes.json ./db/nosql/indexes.json
+COPY db/nosql/audit-table.json ./db/nosql/audit-table.json
 
 EXPOSE 8001
 

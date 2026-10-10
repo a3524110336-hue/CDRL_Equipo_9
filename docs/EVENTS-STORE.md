@@ -1,4 +1,4 @@
-# Eventos NoSQL M04/M05 — contrato de implementación
+# Eventos NoSQL M04/M05/M06 — contrato de implementación
 
 Autor: Marco Antonio Osorio Hernandez.
 
@@ -147,14 +147,14 @@ altas sobre la misma tabla produce el error de duplicado descrito abajo.
 
 | Método | Retorno y contrato |
 | --- | --- |
-| `build_lectura(lectura_id, lectura, *, payload=None)` | Documento validado, con claves y número `Decimal`; no escribe. |
-| `put_lectura(lectura_id, lectura, *, payload=None)` | Respuesta de `PutItem`; alta condicional, no sobrescribe. |
+| `build_lectura(lectura_id, lectura, *, payload=None, fuente="api")` | Documento v2 validado, con claves y número `Decimal`; no escribe. |
+| `put_lectura(lectura_id, lectura, *, payload=None, fuente="api")` | Respuesta de `PutItem`; alta condicional, no sobrescribe. |
 | `get_lectura(equipo_codigo, metrica, medido_en, lectura_id, *, consistent_read=True)` | Item o `None`; usa la clave completa normalizada, sin consulta por id solo. |
 | `build_alerta(*, lectura_id, umbral_id, estado, severidad, medido_en, cerrada_en=None)` | Documento validado; no escribe. Para estado cerrado exige fecha de cierre. |
 | `put_alerta(*, lectura_id, umbral_id, estado, severidad, medido_en, cerrada_en=None)` | Respuesta de `PutItem`; alta única por par lectura/umbral. |
 | `get_alerta(lectura_id, umbral_id, *, consistent_read=True)` | Item o `None`. En M05 devuelve el documento directamente, en lugar de la envoltura boto3 con `Item`. |
 | `actualizar_estado_alerta(lectura_id, umbral_id, estado, *, cerrada_en=None)` | Item resultante; error si falta la alerta o si la transición no es válida. |
-| `delete_alerta(lectura_id, umbral_id)` | `True` si eliminó un item; `False` si ya no existía, usando `ReturnValues=ALL_OLD`. |
+| `delete_alerta(lectura_id, umbral_id)` | `True` si eliminó un item con auditoría atómica; `False` si ya no existía. |
 
 Solo se permiten `abierta → reconocida`, `reconocida → cerrada` y
 `abierta → cerrada`. Una cerrada no se reabre. Pedir el estado que ya tiene
@@ -162,9 +162,9 @@ devuelve el documento sin `UpdateItem`, y conserva la fecha de cierre. Al
 cerrar, `cerrada_en` se genera en UTC si el consumidor no proporciona una fecha
 con zona; en otros estados no se admite una fecha de cierre.
 
-El cambio usa `UpdateItem` con
-`attribute_exists(PK) AND estado = :estado_anterior`. En la misma escritura
-atómica actualiza `estado` y `GSI1PK` y añade `cerrada_en` al cerrar. La identidad
+El cambio usa un `Update` en `TransactWriteItems` con
+`attribute_exists(PK) AND estado = :estado_anterior`. En la misma transacción
+guarda la auditoría, actualiza `estado` y `GSI1PK` y añade `cerrada_en` al cerrar. La identidad
 base, la severidad y el instante de la lectura no cambian. Ante un fallo de esa
 condición, relee por la tabla base con consistencia fuerte: devuelve éxito si
 otro escritor ya alcanzó el estado solicitado; informa ausencia o transición
@@ -285,6 +285,68 @@ evidencia y el tag `week-05-final` corresponden a la integración del equipo.
 Esta guía no declara esos resultados como aprobados. El cierre debe comprobar
 `make setup && make verify && make run` con los archivos de todos los
 integrantes.
+
+## Integración M06 — Marco Antonio Osorio Hernandez
+
+El contrato vigente es ADR-006. `build_lectura` y `put_lectura` producen v2 con
+`fuente="api"` por defecto; las cargas de `load_events.py` usan `"lote"` y la
+recuperación usa `"fixture"`. El store genera `schemaVersion: 2` y el instante
+UTC `registrado_en`. Toda lectura pública pasa por `normalizar_lectura`, una
+función pura que conserva v1 en almacenamiento y añade los valores de lectura
+`schemaVersion: 1`, `fuente: "desconocida"`, `registrado_en: None`. Versiones
+explícitas distintas del número 2 producen `VersionDesconocida`.
+
+`ensure_table()` prepara además `DYNAMODB_AUDIT_TABLE` (por defecto
+`cdrl_auditoria`) conforme a `audit-table.json`. La imagen de la API incluye
+ambas declaraciones. En pruebas se puede pasar `audit_table_name` para aislar
+también la auditoría, junto con `table_name`.
+
+`registrar_auditoria(registro)` acepta un diccionario; alternativamente acepta
+los campos como argumentos nombrados. Genera los campos técnicos omitidos
+(`schemaVersion`, `operacion_id`, `ocurrido_en`, `PK`, `SK`), rechaza campos
+extra, patrones de secretos, enumeraciones inválidas y claves inconsistentes.
+Los errores de contrato son `AuditoriaInvalida`. Las consultas son
+`query_auditoria_dia(dia, limite=..., exclusive_start_key=...)` y
+`query_auditoria_clave(clave_afectada, limite=..., exclusive_start_key=...)`;
+ambas devuelven páginas boto3 con cursor. La consulta por clave usa el GSI
+`AUD_CLAVE` y por ello es eventualmente consistente.
+
+Los cambios y bajas de alertas usan `TransactWriteItems` con auditoría; las
+operaciones admiten `actor_rol="cdrl_ops"` y `operacion_id` opcional. Una
+reserva interna append-only de ese ID en la misma transacción impide repetirlo
+incluso con otra fecha; no aparece en las consultas de auditoría. Un ID repetido
+produce `ConditionalCheckFailedException` y deja intacta la alerta. Pedir el
+mismo estado o borrar una alerta ausente no genera auditoría. Las transiciones
+rechazadas dejan registro seguro antes de propagar `TransicionAlertaInvalida`.
+
+Con DynamoDB Local iniciado y las variables anteriores exportadas:
+
+```bash
+python -m scripts.recover_m06 --backup-dir /tmp/cdrl-m06-backups
+```
+
+Sin argumentos, el respaldo va al directorio temporal del sistema, fuera del
+repositorio. Cada ejecución crea su propia tabla de fixture y deja allí las
+130 lecturas finales para revisión; borra la tabla de restauración en `finally`.
+`recover_m06(store, backup_dir=...)` permite a las pruebas proporcionar su
+store aislado y devuelve un diccionario `recuperacion` con las mediciones del
+ADR-006, incluida `segunda_corrida`. Exige las particiones `fixture-m06` vacías
+antes de cargar. `restaurar_faltantes(store, items)` permite probar la copia
+idempotente por separado: devuelve `restaurados` y `ya_existian`, no sobrescribe
+y conserva los documentos originales, incluidas v1 sin versión.
+
+El JSONL externo usa atributos tipados de DynamoDB para conservar números
+exactos. No usa las consultas normalizadas para respaldar: perderían la forma
+original de v1. El procedimiento devuelve ruta, conteo y SHA-256 del respaldo,
+así como RTO local y pérdida de escrituras posteriores. Un criterio incumplido
+termina con error; no se declara una recuperación exitosa sin comparación.
+
+`verify_base.sh` ejecuta la imagen fija `ghcr.io/gitleaks/gitleaks:v8.30.1`
+sobre todas las referencias del historial y redacta los hallazgos. Cualquier
+hallazgo o error del escáner detiene `make verify`. Las pruebas oficiales de
+M06, el reporte por caso, su evidence y el registro de esos archivos en verify
+corresponden a la integración de Ale. Esta guía no certifica ese cierre ni el
+tag del equipo.
 
 ## Referencias técnicas
 

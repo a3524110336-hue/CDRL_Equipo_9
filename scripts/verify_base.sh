@@ -33,6 +33,14 @@ PY
 
 mkdir -p artifacts
 
+# ADR-006: versión fija; todo el historial disponible, hallazgos redactados.
+# Un hallazgo (o un fallo del escáner) corta verify por set -e.
+echo "Escaneando secretos en el historial con gitleaks..."
+docker run --rm -v "$PWD:/repo:ro" \
+  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+  ghcr.io/gitleaks/gitleaks:v8.30.1 \
+  git /repo --log-opts="--all" --redact --exit-code=1
+
 # Cada verificación tiene credenciales y volúmenes propios. No rota las claves
 # de desarrollo ni elimina sus datos, incluso si las pruebas fallan.
 export COMPOSE_FILE="$PWD/docker-compose.yml"

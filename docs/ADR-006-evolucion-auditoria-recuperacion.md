@@ -1,7 +1,7 @@
 # ADR-006 — Evolución de documentos, auditoría y recuperación del almacén de eventos
 
 ## Estado
-Aceptado. Define el contrato de M06 para `src/events_store.py` (Persona 2) y
+Aceptado. Define el contrato de M06 para `src/events_store.py` (Marco Antonio Osorio Hernandez) y
 para las pruebas y la evidencia (Persona 3). Los nombres de campos, tablas y
 operaciones de este ADR son los que usa el código; si el código necesita otro,
 se cambia aquí primero.
@@ -137,11 +137,18 @@ patrones son la red por si alguien amplía una enumeración sin pensar.
 
 **Append-only:**
 
-- `EventsStore` solo expone `registrar_auditoria` (un `PutItem` con
-  `attribute_not_exists(PK)`) y las dos consultas. **No existe** un método para
+- `EventsStore` solo expone `registrar_auditoria` (un `Put` con
+  `attribute_not_exists(PK)`, junto con su reserva en `TransactWriteItems`) y
+  las dos consultas. **No existe** un método para
   actualizar ni borrar auditoría.
 - Repetir el mismo `operacion_id` falla con `ConditionalCheckFailedException`:
   un registro no se puede sobrescribir.
+  Para imponerlo incluso con otro `ocurrido_en`, cada escritura reserva además
+  un item interno con `PK = OP#<operacion_id>` y `SK = OP#<operacion_id>` en la
+  misma transacción. La reserva solo contiene esas claves y `operacion_id`,
+  no tiene `clave_afectada` y no aparece en QA1 ni QA2. No es un segundo registro
+  de auditoría. La cancelación por reserva duplicada se expone como
+  `ConditionalCheckFailedException`; otros fallos conservan su código boto3.
 - En AWS, la política IAM del rol de la aplicación permite `PutItem` y `Query`
   sobre `cdrl_auditoria` y **niega** `UpdateItem`, `DeleteItem` y
   `BatchWriteItem`, con PITR activado en la tabla.
@@ -151,10 +158,10 @@ patrones son la red por si alguien amplía una enumeración sin pensar.
 | Operación | Cuándo | Cómo |
 | --- | --- | --- |
 | `actualizar_estado_alerta` que cambia el estado | siempre | **`TransactWriteItems`**: el `Update` condicional de la alerta y el `Put` de la auditoría van juntos. O se escriben los dos o ninguno |
-| `actualizar_estado_alerta` rechazada por `TransicionAlertaInvalida` | siempre | `Put` simple con `resultado: rechazada` y `codigo_error`; no hubo cambio de datos que proteger |
+| `actualizar_estado_alerta` rechazada por `TransicionAlertaInvalida` | siempre | `Put` con `resultado: rechazada` y `codigo_error`, junto con su reserva; no hubo cambio de datos que proteger |
 | `delete_alerta` de una alerta existente | siempre | `TransactWriteItems`: `Delete` con `attribute_exists(PK)` + `Put` de auditoría |
 | repetir una operación que no cambia nada (mismo estado, borrar algo ausente) | **no** | no hay cambio; auditarlo solo llenaría la tabla de ruido |
-| `falla_controlada` y `restaurar_lecturas` | una vez por corrida | `Put` al final de cada paso, con `conteo` y la clave del lote |
+| `falla_controlada` y `restaurar_lecturas` | una vez por corrida | `Put` con reserva al final de cada paso, con `conteo` y la clave del lote |
 
 La transacción es la decisión importante de esta sección: sin ella, una alerta
 podría cambiar de estado y fallar después la escritura de su auditoría, y la
@@ -274,7 +281,7 @@ emulador**):
 
 ## Consecuencias
 
-- **Persona 2:** `normalizar_lectura`, `VersionDesconocida`, `put_lectura` con
+- **Marco Antonio Osorio Hernandez:** `normalizar_lectura`, `VersionDesconocida`, `put_lectura` con
   `fuente`, `registrar_auditoria` con lista blanca, `AuditoriaInvalida`,
   `TransactWriteItems` en `actualizar_estado_alerta` y `delete_alerta`,
   `ensure_table` también para `audit-table.json`, `scripts/recover_m06.py` y
