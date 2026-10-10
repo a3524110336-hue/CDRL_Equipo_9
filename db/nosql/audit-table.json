@@ -1,0 +1,68 @@
+{
+  "schema": "cdrl-nosql-audit/1",
+  "adr": "docs/ADR-006-evolucion-auditoria-recuperacion.md",
+  "description": "Tabla de auditoria append-only, separada de cdrl_eventos. Solo se escribe con PutItem condicional; ningun rol de la aplicacion puede actualizar ni borrar sus items.",
+  "table": {
+    "TableNameEnv": "DYNAMODB_AUDIT_TABLE",
+    "DefaultTableName": "cdrl_auditoria",
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+      {"AttributeName": "PK", "KeyType": "HASH"},
+      {"AttributeName": "SK", "KeyType": "RANGE"}
+    ],
+    "AttributeDefinitions": [
+      {"AttributeName": "PK", "AttributeType": "S"},
+      {"AttributeName": "SK", "AttributeType": "S"},
+      {"AttributeName": "clave_afectada", "AttributeType": "S"}
+    ],
+    "GlobalSecondaryIndexes": [
+      {
+        "IndexName": "AUD_CLAVE",
+        "KeySchema": [
+          {"AttributeName": "clave_afectada", "KeyType": "HASH"},
+          {"AttributeName": "SK", "KeyType": "RANGE"}
+        ],
+        "Projection": {"ProjectionType": "ALL"}
+      }
+    ]
+  },
+  "keys": {
+    "PK": "AUD#<YYYY-MM-DD del instante UTC>",
+    "SK": "TS#<ocurrido_en UTC con microsegundos>#<operacion_id>"
+  },
+  "queries": [
+    {
+      "id": "QA1",
+      "description": "Auditoria de un dia, en orden temporal",
+      "operation": "Query",
+      "index": "TABLE",
+      "key_condition": "PK = AUD#<dia>"
+    },
+    {
+      "id": "QA2",
+      "description": "Historial de una alerta o de un lote, en orden temporal",
+      "operation": "Query",
+      "index": "AUD_CLAVE",
+      "key_condition": "clave_afectada = <clave>"
+    }
+  ],
+  "fields": {
+    "required": ["PK", "SK", "schemaVersion", "operacion_id", "operacion", "actor_rol", "ocurrido_en", "entidad", "clave_afectada", "resultado"],
+    "optional": ["codigo_error", "estado_anterior", "estado_nuevo", "conteo", "motivo"],
+    "enums": {
+      "operacion": ["actualizar_estado_alerta", "delete_alerta", "falla_controlada", "restaurar_lecturas"],
+      "actor_rol": ["cdrl_writer", "cdrl_ops", "recuperacion"],
+      "entidad": ["alerta", "lote_lecturas"],
+      "resultado": ["ok", "rechazada"],
+      "estado_anterior": ["abierta", "reconocida", "cerrada"],
+      "estado_nuevo": ["abierta", "reconocida", "cerrada"]
+    },
+    "patterns": {
+      "operacion_id": "^[0-9a-f]{32}$",
+      "clave_afectada": "^(LECTURA#[0-9]{19}#UMBRAL#[0-9]{19}|LOTE#[0-9a-f]{32})$",
+      "codigo_error": "^[A-Za-z]{1,64}$",
+      "motivo": "^[a-z0-9_]{1,64}$"
+    },
+    "forbidden_examples": ["password", "secret", "token", "aws_access_key_id", "aws_secret_access_key", "endpoint", "dsn", "connection_string", "authorization", "valor", "payload", "documento_completo"]
+  }
+}
