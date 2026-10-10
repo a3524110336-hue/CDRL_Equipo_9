@@ -1,7 +1,10 @@
 # ADR-003 — Cuatro roles de base de datos y mínimo privilegio
 
 ## Estado
-Aceptado.
+Aceptado. Revisado el 2026-10-10 tras la retroalimentación de M03: se agrega la
+vista segura del operador (`0006_vista_operador.sql`) y la sección *Permisos que
+usa realmente la API*, que sustituye el contrato provisional de la primera
+versión.
 
 ## Contexto
 
@@ -26,7 +29,7 @@ declarado, manteniendo los secretos fuera del repositorio.
 | `cdrl_migrator` | Es **dueño** del esquema: DDL, y DML sobre todas las tablas (seed y reconciliación) | Crear roles, cambiar contraseñas, tocar la base fuera de `public` |
 | `cdrl_writer` | `SELECT` en `equipos`; `SELECT, INSERT` en `lecturas`; `USAGE` de su secuencia | `UPDATE`, `DELETE`, cualquier DDL, y **leer `umbrales` o `alertas`** |
 | `cdrl_reader` | `SELECT` en `equipos`, `lecturas`, `umbrales`, `alertas` | Escribir cualquier cosa; leer `schema_migrations` |
-| `cdrl_ops` | `SELECT` en `schema_migrations` y las vistas `pg_stat_*` vía `pg_monitor` | **Leer una sola fila de negocio** |
+| `cdrl_ops` | `SELECT` en `schema_migrations`, las vistas `pg_stat_*` vía `pg_monitor` y las vistas agregadas `ops_estado_ingesta` y `ops_resumen_alertas` (`0006`) | **Leer una sola fila de negocio**: ni valores medidos, ni umbrales, ni `valor_observado`, ni nombre o ubicación de equipos |
 
 Tres decisiones dentro de ese reparto merecen justificación:
 
@@ -78,6 +81,65 @@ creada el rol todavía no existe y el script lo detecta, así que las migracione
 hasta la `0005` corren con el usuario administrador, que es justo quien debe
 crear roles.
 
+### La vista segura del operador (`0006_vista_operador.sql`)
+
+Con `pg_monitor` el operador sabe si la base está viva, pero no si la ingesta lo
+está: para ver que un equipo dejó de reportar tendría que leer `lecturas`, que es
+justo lo que su rol le niega. La `0006` le da esa respuesta sin abrirle las
+tablas, con dos vistas agregadas:
+
+| Vista | Columnas | Lo que responde |
+| --- | --- | --- |
+| `ops_estado_ingesta` | `equipo`, `metrica`, `lecturas`, `ultima_medicion`, `ultimo_registro` | ¿Qué equipo o métrica dejó de llegar, y desde cuándo? |
+| `ops_resumen_alertas` | `estado`, `severidad`, `alertas`, `mas_antigua`, `mas_reciente` | ¿Cuántas alertas siguen abiertas y cuánto llevan esperando? |
+
+- **Por qué funciona sin `GRANT` sobre las tablas:** una vista se ejecuta con los
+  privilegios de su dueño, `cdrl_migrator`, no con los de quien la consulta.
+  `cdrl_ops` recibe solo `SELECT` sobre las dos vistas.
+- **`security_barrier`:** impide que un filtro del consultante se evalúe antes
+  que la vista y deduzca datos por efectos laterales (por ejemplo, una función
+  que lance un error según el valor).
+- **Agregadas a propósito:** no exponen identificadores de filas ni valores, y
+  una vista agregada no es actualizable, así que tampoco sirve de puerta de
+  escritura.
+- **Solo para `cdrl_ops`:** la migración revoca las vistas a `PUBLIC`,
+  `cdrl_writer` y `cdrl_reader` (los defaults de la `0005` darían `SELECT` al
+  reader sobre toda vista nueva). La API no las necesita.
+- La propia migración fija `cdrl_migrator` como dueño: en una base nueva la
+  primera pasada corre con el administrador y la vista nacería suya.
+
+Pruebas: `tests/test_ops_vista_segura.py` (caso normal que cuadra la vista contra
+el conteo de `cdrl_reader`, columnas exactas, dos fallos declarados —ops no puede
+redefinir la vista para que exponga `valor` ni escribir a través de ella— y dos
+accesos denegados).
+
+### Permisos que usa realmente la API
+
+Desde M03 (`src/database.py`, función `conexion`) cada ruta abre su conexión con
+un rol fijo; ni el cliente ni `POSTGRES_USER` pueden elevarlo, y si falta la
+contraseña del rol la API responde `503 configuracion_no_disponible` en vez de
+recurrir al administrador. El compose solo le inyecta `CDRL_READER_PASSWORD` y
+`CDRL_WRITER_PASSWORD`: la API **no tiene** credenciales de `cdrl_migrator`,
+`cdrl_ops` ni `cdrl_dev`.
+
+| Ruta | Función | Rol | Privilegios que ejerce |
+| --- | --- | --- | --- |
+| `POST /lecturas/validar` | `database.validar_lectura` | `cdrl_reader` | `SELECT` en `equipos` y `lecturas` (equipo existe, sin duplicado) |
+| `POST /lecturas` | `database.guardar_lectura` | `cdrl_writer` | `SELECT` en `equipos`; `INSERT ... RETURNING` en `lecturas`; `USAGE` de `lecturas_id_seq` |
+| `GET /lecturas` | `queries.ultimas_lecturas` | `cdrl_reader` | `SELECT` en `equipos` y `lecturas` |
+| `GET /lecturas/resumen` | `queries.resumen_por_metrica` | `cdrl_reader` | `SELECT` en `equipos` y `lecturas` |
+| `GET /lecturas/fuera-de-umbral` | `queries.lecturas_fuera_de_umbral` | `cdrl_reader` | `SELECT` en `equipos`, `lecturas` y `umbrales` |
+
+Lo que la API **no usa** aunque el rol lo tenga: `cdrl_reader` puede leer
+`alertas`, pero ninguna ruta actual la consulta; se mantiene porque `alertas` es
+dato de negocio de lectura y el reparto de la `0005` es por oficio, no por ruta.
+`POST /lecturas/validar` usa el reader y no el writer porque no escribe nada.
+
+Los roles no son intercambiables: `cdrl_writer` **no puede leer `umbrales`**, así
+que servir `GET /lecturas/fuera-de-umbral` con el rol de escritura falla con
+`permission denied`. Es deliberado: quien escribe no necesita el criterio de
+alerta.
+
 ### Secretos: ninguna contraseña versionada
 
 Los roles se crean con `PASSWORD NULL`, que bajo `scram-sha-256` no autentica
@@ -120,20 +182,15 @@ del servidor.
 
 ## Consecuencias
 
-- La separación **existe en la base pero todavía no se usa en la ruta de la
-  aplicación**: `src/database.py` sigue conectando con `POSTGRES_USER`, que en
-  el compose es `cdrl_dev`. Conectar cada operación con su rol es la parte de
-  Persona 2 y es lo que convierte este ADR en una defensa real.
-- **Contrato para Persona 2:** los `GET` deben usar `cdrl_reader` y el `POST
-  /lecturas`, `cdrl_writer`. No es intercambiable: `cdrl_writer` **no puede leer
-  `umbrales`**, así que `GET /lecturas/fuera-de-umbral` falla con `permission
-  denied` si se sirve con el rol de escritura. Es deliberado —quien escribe no
-  necesita el criterio de alerta— y la API ya tiene la ruta `503
-  modelo_no_disponible` para degradar si se equivoca el rol.
-- **Contrato para Persona 3:** las tres pruebas negativas mínimas del hito ya
-  están comprobadas a mano (tabla de abajo) y son directamente automatizables;
-  la tabla incluye seis más. Las credenciales de prueba deben salir del entorno,
-  no del código de test.
+- La separación se usa en la ruta de la aplicación: cada operación conecta con
+  su rol (ver *Permisos que usa realmente la API*). La primera versión de este
+  ADR, anterior a ese cambio, decía que la API seguía usando `cdrl_dev`; ya no es
+  así.
+- Las pruebas automatizadas viven en `tests/test_access_control.py` (roles
+  writer, reader y ops) y `tests/test_ops_vista_segura.py` (vista del operador).
+  Las credenciales de prueba salen del entorno, no del código de test. Las
+  pruebas del migrador necesitan que `scripts/rotate_db_passwords.sh` reciba
+  también `migrator`.
 - `cdrl_dev` sigue siendo superusuario y dueño de la base. No se puede eliminar:
   es el usuario de arranque de la imagen oficial, el equivalente al usuario
   maestro de una instancia RDS. Su papel queda reducido a lo administrativo —
