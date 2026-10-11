@@ -13,6 +13,7 @@ required_files=(
   "evidence/m03-least-privilege.json"
   "evidence/m04-nosql-decision.json"
   "evidence/m05-document-store.json"
+  "evidence/m06-evolution-recovery.json"
 )
 
 for required in "${required_files[@]}"; do
@@ -24,7 +25,7 @@ import json
 from pathlib import Path
 
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
-for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json"):
+for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json", "evidence/m06-evolution-recovery.json"):
     payload = json.loads(Path(name).read_text(encoding="utf-8"))
     missing = sorted(required.difference(payload))
     if missing:
@@ -49,11 +50,12 @@ POSTGRES_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.
 CDRL_READER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
 CDRL_WRITER_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
 CDRL_OPS_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
-export COMPOSE_PROJECT_NAME POSTGRES_PASSWORD CDRL_READER_PASSWORD CDRL_WRITER_PASSWORD CDRL_OPS_PASSWORD
+CDRL_MIGRATOR_PASSWORD="$("${PYTHON_BIN:-python3}" -c 'import secrets; print(secrets.token_urlsafe(32))')"
+export COMPOSE_PROJECT_NAME POSTGRES_PASSWORD CDRL_READER_PASSWORD CDRL_WRITER_PASSWORD CDRL_OPS_PASSWORD CDRL_MIGRATOR_PASSWORD
 export POSTGRES_USER=cdrl_dev POSTGRES_DB=cdrl
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}" DYNAMODB_PORT="${DYNAMODB_PORT:-8000}"
 if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-  printf '::add-mask::%s\n' "$POSTGRES_PASSWORD" "$CDRL_READER_PASSWORD" "$CDRL_WRITER_PASSWORD" "$CDRL_OPS_PASSWORD"
+  printf '::add-mask::%s\n' "$POSTGRES_PASSWORD" "$CDRL_READER_PASSWORD" "$CDRL_WRITER_PASSWORD" "$CDRL_OPS_PASSWORD" "$CDRL_MIGRATOR_PASSWORD"
 fi
 docker compose config --quiet
 
@@ -85,7 +87,7 @@ for i in $(seq 1 30); do
 done
 
 bash scripts/apply_migrations.sh
-bash scripts/rotate_db_passwords.sh writer reader ops
+bash scripts/rotate_db_passwords.sh migrator writer reader ops
 
 echo "Verificando que las restricciones rechacen datos invalidos..."
 docker compose exec -T postgres \
@@ -112,6 +114,13 @@ if [ -x ".venv/bin/pytest" ]; then
 fi
 
 $PYTEST_BIN tests/ -v --junitxml=artifacts/pytest-report.xml
+
+# M06: reporte por caso y mediciones de recuperación, generado en cada verify.
+PYTHON_RUN="python3"
+if [ -x ".venv/bin/python" ]; then
+  PYTHON_RUN=".venv/bin/python"
+fi
+$PYTHON_RUN scripts/build_m06_artifact.py
 
 python3 - <<'PY'
 import json
