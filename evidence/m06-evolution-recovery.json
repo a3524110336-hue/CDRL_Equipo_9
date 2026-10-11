@@ -1,6 +1,6 @@
 {
   "assignmentId": "m06-evolution-recovery",
-  "commitSha": "1a49082b2e298dc2c32ba2a576f415a3a00",
+  "commitSha": "d87491e8f64b9799f46b0275725859f669ce2518",
   "tag": "week-06-final",
   "commands": [
     "make setup",
