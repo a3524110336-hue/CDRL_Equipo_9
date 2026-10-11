@@ -1,0 +1,281 @@
+{
+  "schema": "m06-evolution-recovery/1",
+  "generated_at": "2026-10-11T20:36:32.432684+00:00",
+  "synthetic_fixtures": true,
+  "source": "tests/test_m06_evolution_recovery.py contra DynamoDB Local (docker-compose.yml)",
+  "adr": "docs/ADR-006-evolucion-auditoria-recuperacion.md",
+  "pytest": {
+    "total": 9,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0
+  },
+  "casos": [
+    {
+      "id": "M06-N1",
+      "prueba": "test_normal_v1_y_v2_se_leen_igual",
+      "criterio": "versiones antigua y nueva coexisten y se leen en el mismo formato",
+      "esperado": {
+        "mismas_claves": true,
+        "version_v1": 1,
+        "version_v2": 2,
+        "q1_total": 2,
+        "q1_versiones": [
+          1,
+          2
+        ]
+      },
+      "obtenido": {
+        "mismas_claves": true,
+        "version_v1": 1,
+        "version_v2": 2,
+        "q1_total": 2,
+        "q1_versiones": [
+          1,
+          2
+        ]
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-L1",
+      "prueba": "test_limite_v1_sin_fuente_ni_registrado_en",
+      "criterio": "una v1 sin fuente ni registrado_en se lee sin error y sin reescribirse",
+      "esperado": {
+        "fuente": "desconocida",
+        "registrado_en": null,
+        "schemaVersion": 1,
+        "tabla_sigue_sin_schemaVersion": true
+      },
+      "obtenido": {
+        "fuente": "desconocida",
+        "registrado_en": null,
+        "schemaVersion": 1,
+        "tabla_sigue_sin_schemaVersion": true
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-L2",
+      "prueba": "test_limite_restaurar_existente_no_duplica",
+      "criterio": "restaurar un id que ya existe no lo duplica ni lo sobrescribe",
+      "esperado": {
+        "sobre_existente": {
+          "restaurados": 0,
+          "ya_existian": 1
+        },
+        "total_tras_existente": 1,
+        "existente_intacta": true,
+        "sobre_faltante": {
+          "restaurados": 1,
+          "ya_existian": 0
+        },
+        "total_final": 1
+      },
+      "obtenido": {
+        "sobre_existente": {
+          "restaurados": 0,
+          "ya_existian": 1
+        },
+        "total_tras_existente": 1,
+        "existente_intacta": true,
+        "sobre_faltante": {
+          "restaurados": 1,
+          "ya_existian": 0
+        },
+        "total_final": 1
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-F1",
+      "prueba": "test_fallo_declarado_schema_version_desconocida",
+      "criterio": "schemaVersion 3, '2', 0 o true se rechaza; no se adivina",
+      "esperado": [
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida"
+      ],
+      "obtenido": [
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida",
+        "VersionDesconocida"
+      ],
+      "codigo_error": "VersionDesconocida",
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-F2",
+      "prueba": "test_fallo_declarado_auditoria_con_campo_prohibido",
+      "criterio": "una auditoria con campo prohibido o texto secreto se rechaza y la tabla no cambia",
+      "esperado": {
+        "codigos": [
+          "AuditoriaInvalida",
+          "AuditoriaInvalida",
+          "AuditoriaInvalida",
+          "AuditoriaInvalida"
+        ],
+        "registros_nuevos": 0
+      },
+      "obtenido": {
+        "codigos": [
+          "AuditoriaInvalida",
+          "AuditoriaInvalida",
+          "AuditoriaInvalida",
+          "AuditoriaInvalida"
+        ],
+        "registros_nuevos": 0
+      },
+      "codigo_error": "AuditoriaInvalida",
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-A1",
+      "prueba": "test_auditoria_cambiar_alerta_deja_un_registro_sin_datos",
+      "criterio": "cambiar una alerta deja exactamente un registro con estado anterior/nuevo y sin valor ni payload",
+      "esperado": {
+        "registros": 1,
+        "operacion": "actualizar_estado_alerta",
+        "estado_anterior": "abierta",
+        "estado_nuevo": "reconocida",
+        "resultado": "ok",
+        "sin_valor_ni_payload": true,
+        "sin_endpoint": true,
+        "estado_en_tabla": "reconocida"
+      },
+      "obtenido": {
+        "registros": 1,
+        "operacion": "actualizar_estado_alerta",
+        "estado_anterior": "abierta",
+        "estado_nuevo": "reconocida",
+        "resultado": "ok",
+        "sin_valor_ni_payload": true,
+        "sin_endpoint": true,
+        "estado_en_tabla": "reconocida"
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-A2",
+      "prueba": "test_auditoria_append_only_repetir_operacion_id_falla",
+      "criterio": "repetir un operacion_id (incluso con otra fecha) falla y no sobrescribe",
+      "esperado": {
+        "codigos": [
+          "ConditionalCheckFailedException",
+          "ConditionalCheckFailedException"
+        ],
+        "registros": 1,
+        "conteo_original": 1,
+        "en_otra_fecha": 0
+      },
+      "obtenido": {
+        "codigos": [
+          "ConditionalCheckFailedException",
+          "ConditionalCheckFailedException"
+        ],
+        "registros": 1,
+        "conteo_original": 1,
+        "en_otra_fecha": 0
+      },
+      "codigo_error": "ConditionalCheckFailedException",
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-R1",
+      "prueba": "test_recuperacion_recupera_fixture_y_mide",
+      "criterio": "el procedimiento recupera lo borrado sin pisar lo posterior y mide el resultado",
+      "esperado": {
+        "esperados": 30,
+        "restaurados": 30,
+        "ya_existian": 0,
+        "faltantes_tras_restaurar": 0,
+        "diferencias_campo": 0,
+        "v1_restauradas_sin_schemaVersion": 10,
+        "posteriores_intactas": 10,
+        "total_final": 130,
+        "segunda_corrida_restaurados": 0,
+        "auditoria": [
+          "falla_controlada",
+          "restaurar_lecturas"
+        ]
+      },
+      "obtenido": {
+        "esperados": 30,
+        "restaurados": 30,
+        "ya_existian": 0,
+        "faltantes_tras_restaurar": 0,
+        "diferencias_campo": 0,
+        "v1_restauradas_sin_schemaVersion": 10,
+        "posteriores_intactas": 10,
+        "total_final": 130,
+        "segunda_corrida_restaurados": 0,
+        "auditoria": [
+          "falla_controlada",
+          "restaurar_lecturas"
+        ]
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M06-S1",
+      "prueba": "test_log_de_auditoria_sin_secretos",
+      "criterio": "ningun registro de auditoria trae campos fuera de la lista blanca ni patrones de secreto",
+      "esperado": {
+        "hay_registros": true,
+        "campos_extra": [],
+        "valores_con_secreto": []
+      },
+      "obtenido": {
+        "hay_registros": true,
+        "campos_extra": [],
+        "valores_con_secreto": []
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    }
+  ],
+  "recuperacion": {
+    "esperados": 30,
+    "restaurados": 30,
+    "ya_existian": 0,
+    "faltantes_tras_restaurar": 0,
+    "diferencias_campo": 0,
+    "v1_restauradas_sin_schemaVersion": 10,
+    "posteriores_intactas": 10,
+    "total_final": 130,
+    "duracion_restauracion_ms": 5647.326,
+    "escrituras_posteriores_perdidas": 0,
+    "segunda_corrida": {
+      "restaurados": 0,
+      "ya_existian": 120,
+      "faltantes_tras_restaurar": 0,
+      "diferencias_campo": 0
+    },
+    "respaldo_conteo": 120,
+    "respaldo_sha256": "8ec024b73d0f0c86a305f5abb6372e82066fa54834b1c57d20a74b7e9f73d5fc",
+    "tabla_eventos": "cdrl_eventos_test_m06_rec_dcb9982b",
+    "tabla_temporal": "cdrl_eventos_restore_c008c4616be14e84b7d679c98577f29b",
+    "lote_id": "c008c4616be14e84b7d679c98577f29b"
+  },
+  "coverage": {
+    "normal_v1_y_v2_se_leen_igual": true,
+    "limite_1_v1_sin_campos_nuevos": true,
+    "limite_2_restaurar_existente_no_duplica": true,
+    "fallo_declarado_version_desconocida": true,
+    "fallo_declarado_auditoria_campo_prohibido": true,
+    "auditoria_una_operacion_sin_datos": true,
+    "auditoria_append_only": true,
+    "recuperacion_con_mediciones": true,
+    "auditoria_sin_secretos": true
+  },
+  "all_required_cases_passed": true
+}

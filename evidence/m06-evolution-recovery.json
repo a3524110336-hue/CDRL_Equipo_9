@@ -1,0 +1,27 @@
+{
+  "assignmentId": "m06-evolution-recovery",
+  "commitSha": "d87491e8f64b9799f46b0275725859f669ce2518",
+  "tag": "week-06-final",
+  "commands": [
+    "make setup",
+    "make verify",
+    "python scripts/recover_m06.py",
+    "python scripts/build_m06_artifact.py"
+  ],
+  "results": {
+    "evolucion": "Lecturas v1 (sin schemaVersion) y v2 (schemaVersion 2) se leen con normalizar_lectura al mismo formato; schemaVersion desconocida da VersionDesconocida.",
+    "auditoria": "Cambiar una alerta deja un solo registro en cdrl_auditoria sin valor, payload ni endpoint; repetir operacion_id falla; un campo prohibido da AuditoriaInvalida.",
+    "recuperacion": "Del fixture de 120 lecturas se borran 30 y se restauran 30 sin pisar las 10 posteriores: faltantes 0, diferencias de campo 0, posteriores intactas 10.",
+    "tests": "tests/test_m06_evolution_recovery.py: 9 casos contra DynamoDB Local (normal, dos limite, fallos declarados, auditoria, recuperacion y log sin secretos).",
+    "artifact": "artifacts/m06-evolution-recovery.json con la lista casos y la seccion recuperacion, generado por make verify.",
+    "secrets": "Sin credenciales, tokens, datos personales ni cadenas de conexion; gitleaks corre dentro de make verify."
+  },
+  "assumptions": [
+    "DynamoDB Local es el entorno de respaldo; los fixtures son sinteticos con semilla 42.",
+    "Los nombres de campos y operaciones son los de docs/ADR-006-evolucion-auditoria-recuperacion.md."
+  ],
+  "limitations": [
+    "DynamoDB Local no aplica IAM ni tiene respaldos/PITR: el respaldo es logico (Query a JSONL) y el append-only se demuestra por diseno de la API.",
+    "duracion_restauracion_ms se midio en local con 30 documentos y no extrapola a produccion."
+  ]
+}
