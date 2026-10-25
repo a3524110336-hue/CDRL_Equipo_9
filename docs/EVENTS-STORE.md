@@ -358,7 +358,7 @@ la migración. `put_lectura` sigue creando solamente v2 nativas. El lector exige
 `ensure_table()` también crea y compara `migration-backup-table.json`, sin
 índices secundarios. La variable `DYNAMODB_MIGRATION_TABLE` permite cambiar
 `cdrl_migracion_respaldo`; en pruebas se admite `migration_table_name` en el
-constructor para aislar las tres tablas. La imagen debe incluir la declaración
+constructor para aislar las tres tablas. La imagen incluye la declaración
 nueva junto con las otras dos en `db/nosql/`.
 
 Con el entorno virtual instalado y DynamoDB Local iniciado:
@@ -418,6 +418,33 @@ de v1; los metadatos de versión cambian deliberadamente. El rollback sí exige
 igualdad completa de cada documento crudo. Las pruebas oficiales, el artifact,
 la evidence y su incorporación a `make verify` corresponden a Ale; el tag
 `week-08-final` se crea durante el cierre integrado del equipo.
+
+Para comenzar las pruebas de Ale desde `main`, actualizar el repositorio con
+`git pull --ff-only` y usar las funciones y los conteos anteriores. Cada fixture
+debe aislar las tres tablas, porque los respaldos se identifican por migración
+y clave del documento, y no por el nombre de la tabla de eventos:
+
+```python
+from uuid import uuid4
+from src.events_store import EventsStore, MigracionInterrumpida
+
+run = uuid4().hex
+store = EventsStore(
+    table_name=f"m07_eventos_{run}",
+    audit_table_name=f"m07_auditoria_{run}",
+    migration_table_name=f"m07_respaldo_{run}",
+)
+store.ensure_table()
+```
+
+Al terminar el fixture, eliminar esas tres tablas aisladas. La segunda corrida
+de migración no cambia eventos ni respaldos, aunque sí registra los lotes
+evaluados con `conteo=0`. Para leer auditoría en las pruebas, distinguir los
+registros `AUD#...` de las reservas internas `OP#...` del mecanismo de M06.
+Si se consulta `AUD_CLAVE`, esperar su consistencia eventual; la lectura de la
+tabla base por día puede ser fuerte. Para la prueba de interrupción, capturar
+`MigracionInterrumpida`, revisar `exc.reporte["migradas"] == 30` y volver a
+ejecutar sin `detener_tras`; la nueva corrida debe reportar otras 10 migradas.
 
 ## Referencias técnicas
 
