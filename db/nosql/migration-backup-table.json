@@ -1,0 +1,35 @@
+{
+  "schema": "cdrl-nosql-migration-backup/1",
+  "adr": "docs/ADR-007-evolucion-compatible.md",
+  "description": "Copia exacta de cada lectura antes de migrarla. Se escribe en la misma transaccion que la migracion del documento y se borra al revertirlo. Se conserva hasta la fase contract (ADR-007 seccion 6).",
+  "table": {
+    "TableNameEnv": "DYNAMODB_MIGRATION_TABLE",
+    "DefaultTableName": "cdrl_migracion_respaldo",
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+      {"AttributeName": "PK", "KeyType": "HASH"},
+      {"AttributeName": "SK", "KeyType": "RANGE"}
+    ],
+    "AttributeDefinitions": [
+      {"AttributeName": "PK", "AttributeType": "S"},
+      {"AttributeName": "SK", "AttributeType": "S"}
+    ]
+  },
+  "keys": {
+    "PK": "MIG#<migracion_id>",
+    "SK": "<PK de la lectura>|<SK de la lectura>"
+  },
+  "queries": [
+    {
+      "id": "QM1",
+      "description": "Todos los respaldos de una migracion, para revertirla",
+      "operation": "Query",
+      "index": "TABLE",
+      "key_condition": "PK = MIG#<migracion_id>"
+    }
+  ],
+  "fields": {
+    "required": ["PK", "SK", "migracion_id", "respaldado_en", "documento"],
+    "migraciones": ["m07-v1-a-v2"]
+  }
+}

@@ -6,6 +6,10 @@ para las pruebas y la evidencia (Persona 3). Los nombres de campos, tablas y
 operaciones de este ADR son los que usa el código; si el código necesita otro,
 se cambia aquí primero.
 
+**Actualización M07:** la regla «no hay migración masiva» del §1 queda
+reemplazada por `docs/ADR-007-evolucion-compatible.md`. El upcast al leer, la
+auditoría (§2) y la recuperación (§3) siguen vigentes.
+
 ## Contexto
 
 M06 pide tres cosas sobre el almacén documental de M05 (ADR-005):

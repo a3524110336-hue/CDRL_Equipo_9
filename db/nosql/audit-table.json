@@ -50,8 +50,8 @@
     "required": ["PK", "SK", "schemaVersion", "operacion_id", "operacion", "actor_rol", "ocurrido_en", "entidad", "clave_afectada", "resultado"],
     "optional": ["codigo_error", "estado_anterior", "estado_nuevo", "conteo", "motivo"],
     "enums": {
-      "operacion": ["actualizar_estado_alerta", "delete_alerta", "falla_controlada", "restaurar_lecturas"],
-      "actor_rol": ["cdrl_writer", "cdrl_ops", "recuperacion"],
+      "operacion": ["actualizar_estado_alerta", "delete_alerta", "falla_controlada", "restaurar_lecturas", "migrar_lecturas", "revertir_migracion"],
+      "actor_rol": ["cdrl_writer", "cdrl_ops", "recuperacion", "migracion"],
       "entidad": ["alerta", "lote_lecturas"],
       "resultado": ["ok", "rechazada"],
       "estado_anterior": ["abierta", "reconocida", "cerrada"],
