@@ -348,6 +348,77 @@ M06, el reporte por caso, su evidence y el registro de esos archivos en verify
 corresponden a la integración de Ale. Esta guía no certifica ese cierre ni el
 tag del equipo.
 
+## Integración M07 — Marco Antonio Osorio Hernandez
+
+El contrato de migración y rollback es [ADR-007](ADR-007-evolucion-compatible.md).
+Primero se despliega el lector que acepta `fuente="migrada"`; después se aplica
+la migración. `put_lectura` sigue creando solamente v2 nativas. El lector exige
+`migracion_id="m07-v1-a-v2"` en las migradas y conserva la lectura de v1.
+
+`ensure_table()` también crea y compara `migration-backup-table.json`, sin
+índices secundarios. La variable `DYNAMODB_MIGRATION_TABLE` permite cambiar
+`cdrl_migracion_respaldo`; en pruebas se admite `migration_table_name` en el
+constructor para aislar las tres tablas. La imagen debe incluir la declaración
+nueva junto con las otras dos en `db/nosql/`.
+
+Con el entorno virtual instalado y DynamoDB Local iniciado:
+
+```bash
+export DYNAMODB_ENDPOINT=http://localhost:8000
+export AWS_REGION=us-east-1
+export DYNAMODB_LOCAL=true
+.venv/bin/python scripts/migrate_m07.py --dry-run --lote 25
+make migrate-docs
+make rollback-docs
+```
+
+Los objetivos Make usan `.venv/bin/python` cuando existe, o `python3`. Se puede
+seleccionar otro intérprete con `make PYTHON=python migrate-docs`. El script
+opera sobre las tablas configuradas: no carga ni borra fixtures automáticamente.
+El fixture reproducible de semilla 42 y equipo `fixture-m07` corresponde a las
+pruebas de Ale. `--dry-run` solo clasifica, sin crear tablas, respaldos ni
+auditoría; requiere que exista la tabla de eventos.
+
+`migrar_lecturas_v1(lote=25, detener_tras=None, dry_run=False)` devuelve un
+diccionario con `corrida_id`, `escaneadas` (lecturas clasificadas), `migrables`
+(v1 encontradas), `migradas`, `ya_v2`, `version_desconocida`, `omitidas`,
+`fallidas`, `revertidas`, `no_revertible`, `errores` y `duracion_ms`.
+`omitidas` cuenta v2 y versiones desconocidas; en rollback cuenta los conflictos.
+`errores` contiene solo `codigo_error`, nunca mensajes del SDK ni documentos.
+El CLI devuelve código 1 ante versiones desconocidas, conflictos de rollback,
+fallos de escritura o de conexión/configuración. No confundir `migrables` del
+dry-run con escrituras: `migradas` permanece en 0.
+Los errores del SDK que abortan una corrida llevan el atributo `reporte` con
+los conteos parciales; el CLI los imprime sin exponer el mensaje del error.
+
+Cada página de Scan usa `Limit=lote`, filtro por entidad y lectura fuerte;
+el límite incluye elementos evaluados de otras entidades, por lo que puede
+haber páginas vacías. Siempre se sigue `LastEvaluatedKey`. Cada v1 usa una
+transacción de respaldo más Update condicionado. Una carrera ganada por otro
+migrador se reclasifica mediante lectura fuerte; los demás fallos se reportan
+sin perder la atomicidad por documento. Una v1 que ya tenga campos reservados
+de migración se rechaza con `DocumentoInvalido` para no sobrescribirlos.
+
+`detener_tras=30` lanza `MigracionInterrumpida` tras confirmar 30 documentos;
+su atributo `reporte` contiene las medidas parciales. El lote parcial también
+se audita. Otra llamada sin ese argumento termina los pendientes. Cada página
+con lecturas deja un registro de lote, incluso con conteo 0; todos comparten
+`LOTE#<corrida_id>`. La auditoría del lote se escribe al finalizar la página,
+separada de las transacciones por documento. Una terminación abrupta del proceso
+puede impedir ese registro; una falla de auditoría se propaga, nunca se informa
+éxito. Los respaldos y las marcas persistidas permiten reanudar igualmente.
+
+`revertir_migracion("m07-v1-a-v2", lote=25)` pagina los respaldos con Query y
+restaura el mapa original completo. Si falta la lectura o tiene otra marca,
+cuenta `no_revertible`, conserva el respaldo y no la crea ni la sobrescribe.
+Después de un rollback exitoso se puede volver a migrar con el mismo ID.
+
+Las comparaciones de Q1 antes y después deben contrastar los campos de negocio
+de v1; los metadatos de versión cambian deliberadamente. El rollback sí exige
+igualdad completa de cada documento crudo. Las pruebas oficiales, el artifact,
+la evidence y su incorporación a `make verify` corresponden a Ale; el tag
+`week-08-final` se crea durante el cierre integrado del equipo.
+
 ## Referencias técnicas
 
 - [PutItem condicional](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_PutItem.html)

@@ -1,4 +1,6 @@
-.PHONY: setup verify run migrate
+.PHONY: setup verify run migrate migrate-docs rollback-docs
+
+PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
 setup:
 	@mkdir -p artifacts evidence docs db/migrations db/seed src tests
@@ -9,6 +11,12 @@ setup:
 
 migrate:
 	@bash scripts/apply_migrations.sh
+
+migrate-docs:
+	@$(PYTHON) scripts/migrate_m07.py --aplicar
+
+rollback-docs:
+	@$(PYTHON) scripts/migrate_m07.py --rollback
 
 verify:
 	@bash scripts/verify_base.sh

@@ -1,4 +1,4 @@
-"""Almacén documental M05/M06; PostgreSQL conserva los endpoints existentes.
+"""Almacén documental M05/M06/M07; PostgreSQL conserva los endpoints existentes.
 
 Las lecturas son append-only. La identidad de una alerta vive en la clave base
 (lectura, umbral), porque una condición sobre un atributo secundario no impone
@@ -25,6 +25,7 @@ from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import DYNAMODB_CONTEXT
 from botocore.config import Config
 from botocore.exceptions import (
+    BotoCoreError,
     ClientError,
     ConnectionClosedError,
     ConnectTimeoutError,
@@ -41,6 +42,8 @@ GSI_NAME = "GSI1"
 MAX_ITEM_BYTES = 409600
 INDEXES_PATH = Path(__file__).resolve().parents[1] / "db" / "nosql" / "indexes.json"
 AUDIT_PATH = INDEXES_PATH.with_name("audit-table.json")
+MIGRATION_PATH = INDEXES_PATH.with_name("migration-backup-table.json")
+MIGRACION_ID = "m07-v1-a-v2"
 _ESTADOS = ("abierta", "reconocida", "cerrada")
 _SEVERIDAD = {"advertencia": 1, "critica": 2}
 _LECTURA = TypeAdapter(LecturaEntrada)
@@ -63,6 +66,14 @@ class AuditoriaInvalida(DocumentoInvalido):
     """Registro fuera del contrato seguro de auditoría."""
 
 
+class MigracionInterrumpida(RuntimeError):
+    """Interrupción controlada después de confirmar documentos y auditar el lote."""
+
+    def __init__(self, reporte: dict):
+        super().__init__("Migración interrumpida; volver a correr completa las lecturas pendientes.")
+        self.reporte = reporte
+
+
 def normalizar_lectura(item: dict) -> dict:
     """Upcast puro: nunca reescribe el documento persistido."""
     result = dict(item)
@@ -73,8 +84,10 @@ def normalizar_lectura(item: dict) -> dict:
           or item["schemaVersion"] != 2):
         raise VersionDesconocida("schemaVersion no soportada.")
     else:
-        if item.get("fuente") not in ("api", "lote", "fixture"):
+        if item.get("fuente") not in ("api", "lote", "fixture", "migrada"):
             raise DocumentoInvalido("fuente v2 inválida o ausente.")
+        if item["fuente"] == "migrada" and item.get("migracion_id") != MIGRACION_ID:
+            raise DocumentoInvalido("migracion_id inválido o ausente para fuente migrada.")
         if not isinstance(item.get("registrado_en"), str):
             raise DocumentoInvalido("registrado_en v2 obligatorio.")
         _utc(item["registrado_en"])
@@ -185,7 +198,8 @@ class EventsStore:
     ``resource`` permite inyectar un recurso boto3 para pruebas aisladas.
     """
 
-    def __init__(self, table_name: str | None = None, *, resource=None, audit_table_name: str | None = None):
+    def __init__(self, table_name: str | None = None, *, resource=None, audit_table_name: str | None = None,
+                 migration_table_name: str | None = None):
         self.table_name = table_name or os.getenv("DYNAMODB_TABLE", "cdrl_eventos")
         if resource is None:
             endpoint = os.getenv("DYNAMODB_ENDPOINT", "").strip()
@@ -215,18 +229,21 @@ class EventsStore:
         self.table = resource.Table(self.table_name)
         self.audit_table_name = audit_table_name or os.getenv("DYNAMODB_AUDIT_TABLE", "cdrl_auditoria")
         self.audit_table = resource.Table(self.audit_table_name)
+        self.migration_table_name = migration_table_name or os.getenv("DYNAMODB_MIGRATION_TABLE", "cdrl_migracion_respaldo")
+        self.migration_table = resource.Table(self.migration_table_name)
 
     def ensure_table(self) -> dict:
-        """Crea/compara eventos y auditoría contra sus declaraciones."""
+        """Crea/compara eventos, auditoría y respaldo contra sus declaraciones."""
         description = self._ensure_declared_table(self.table_name, INDEXES_PATH)
         self._ensure_declared_table(self.audit_table_name, AUDIT_PATH)
+        self._ensure_declared_table(self.migration_table_name, MIGRATION_PATH)
         return description
 
     def _ensure_declared_table(self, table_name: str, path: Path) -> dict:
         declared = json.loads(path.read_text(encoding="utf-8"))
         spec = declared["table"]
         indexes = [{key: index[key] for key in ("IndexName", "KeySchema", "Projection")}
-                   for index in spec["GlobalSecondaryIndexes"]]
+                   for index in spec.get("GlobalSecondaryIndexes", [])]
         client = self.resource.meta.client
         try:
             client.describe_table(TableName=table_name)
@@ -239,7 +256,7 @@ class EventsStore:
                     KeySchema=spec["KeySchema"],
                     AttributeDefinitions=spec["AttributeDefinitions"],
                     BillingMode=spec["BillingMode"],
-                    GlobalSecondaryIndexes=indexes,
+                    **({"GlobalSecondaryIndexes": indexes} if indexes else {}),
                 )
             except ClientError as concurrent:
                 if concurrent.response["Error"]["Code"] != "ResourceInUseException":
@@ -302,6 +319,172 @@ class EventsStore:
             Item=self.build_lectura(lectura_id, lectura, payload=payload, fuente=fuente),
             ConditionExpression="attribute_not_exists(PK)", ReturnConsumedCapacity="TOTAL",
         )
+
+    @staticmethod
+    def _reporte_migracion() -> dict:
+        return dict(migracion_id=MIGRACION_ID, corrida_id=uuid4().hex, escaneadas=0,
+                    migrables=0, migradas=0, ya_v2=0, version_desconocida=0,
+                    omitidas=0, fallidas=0, revertidas=0, no_revertible=0, errores=[])
+
+    @staticmethod
+    def _error_migracion(reporte: dict, codigo: str) -> None:
+        # Solo códigos; nunca mensajes de boto3, documentos ni endpoints.
+        reporte["errores"].append({"codigo_error": codigo})
+
+    def _auditar_lote_migracion(self, reporte: dict, operacion: str, conteo: int, errores: list) -> None:
+        fields = dict(operacion=operacion, actor_rol="migracion", entidad="lote_lecturas",
+                      clave_afectada=f"LOTE#{reporte['corrida_id']}", conteo=conteo,
+                      motivo="m07_v1_a_v2", resultado="rechazada" if errores else "ok")
+        if errores:
+            fields["codigo_error"] = errores[0]["codigo_error"]
+        self.registrar_auditoria(**fields)
+
+    @staticmethod
+    def _condicion_cancelada(exc: ClientError) -> bool:
+        return (exc.response["Error"]["Code"] == "TransactionCanceledException"
+                and any(reason.get("Code") == "ConditionalCheckFailed"
+                        for reason in exc.response.get("CancellationReasons", [])))
+
+    def _migrar_documento(self, item: dict) -> None:
+        """Respaldo y cambio se confirman juntos; nunca guardar una copia posterior."""
+        if any(name in item for name in ("fuente", "registrado_en", "migracion_id")):
+            raise DocumentoInvalido("La v1 contiene campos reservados de migración.")
+        now = _utc(datetime.now(timezone.utc))
+        backup = dict(PK=f"MIG#{MIGRACION_ID}", SK=f"{item['PK']}|{item['SK']}",
+                      migracion_id=MIGRACION_ID, respaldado_en=now, documento=item)
+        self.resource.meta.client.transact_write_items(TransactItems=[
+            {"Put": dict(TableName=self.migration_table_name, Item=backup,
+                         ConditionExpression="attribute_not_exists(PK)")},
+            {"Update": dict(TableName=self.table_name, Key={name: item[name] for name in ("PK", "SK")},
+                            UpdateExpression="SET schemaVersion = :v, fuente = :f, registrado_en = :t, migracion_id = :id",
+                            ConditionExpression="attribute_exists(PK) AND attribute_not_exists(schemaVersion)",
+                            ExpressionAttributeValues={":v": 2, ":f": "migrada", ":t": now, ":id": MIGRACION_ID})},
+        ], ReturnConsumedCapacity="TOTAL")
+
+    def migrar_lecturas_v1(self, lote: int = 25, detener_tras: int | None = None, *, dry_run: bool = False) -> dict:
+        """ADR-007: Scan paginado fuera de la API; reanudar ejecutando otra vez.
+
+        Cada página es un lote de auditoría (también al interrumpirla). El modo
+        dry_run solo clasifica: no crea tablas, respaldos ni auditoría.
+        MigracionInterrumpida.reporte contiene las medidas parciales confirmadas.
+        """
+        if type(lote) is not int or lote < 1:
+            raise ValueError("lote debe ser un entero positivo.")
+        if detener_tras is not None and (type(detener_tras) is not int or detener_tras < 1):
+            raise ValueError("detener_tras debe ser un entero positivo.")
+        if type(dry_run) is not bool:
+            raise ValueError("dry_run debe ser booleano.")
+        report, started = self._reporte_migracion(), time.perf_counter()
+        arguments = dict(FilterExpression="#entidad = :lectura", ExpressionAttributeNames={"#entidad": "entidad"},
+                         ExpressionAttributeValues={":lectura": "lectura"}, Limit=lote, ConsistentRead=True)
+        try:
+            while True:
+                page = self.table.scan(**arguments)
+                changed, error_start = 0, len(report["errores"])
+                try:
+                    for item in page["Items"]:
+                        report["escaneadas"] += 1
+                        if "schemaVersion" in item:
+                            version = item["schemaVersion"]
+                            if not isinstance(version, bool) and isinstance(version, (int, Decimal)) and version == 2:
+                                report["ya_v2"] += 1
+                            else:
+                                report["version_desconocida"] += 1
+                                self._error_migracion(report, "VersionDesconocida")
+                            report["omitidas"] += 1
+                            continue
+                        report["migrables"] += 1
+                        if dry_run:
+                            continue
+                        try:
+                            self._migrar_documento(item)
+                        except ClientError as exc:
+                            if self._condicion_cancelada(exc):
+                                current = self.table.get_item(
+                                    Key={name: item[name] for name in ("PK", "SK")}, ConsistentRead=True).get("Item")
+                                if current is not None and current.get("schemaVersion") == 2 and not isinstance(current["schemaVersion"], bool):
+                                    report["ya_v2"] += 1
+                                    report["omitidas"] += 1
+                                    continue
+                            report["fallidas"] += 1
+                            self._error_migracion(report, exc.response["Error"]["Code"])
+                            continue
+                        except DocumentoInvalido as exc:
+                            report["fallidas"] += 1
+                            self._error_migracion(report, type(exc).__name__)
+                            continue
+                        report["migradas"] += 1
+                        changed += 1
+                        if detener_tras is not None and report["migradas"] >= detener_tras:
+                            raise MigracionInterrumpida(report)
+                finally:
+                    if not dry_run and page["Items"]:
+                        self._auditar_lote_migracion(report, "migrar_lecturas", changed, report["errores"][error_start:])
+                cursor = page.get("LastEvaluatedKey")
+                if not cursor:
+                    return report
+                arguments["ExclusiveStartKey"] = cursor
+        except (BotoCoreError, ClientError) as exc:
+            report["fallidas"] += 1
+            code = exc.response["Error"]["Code"] if isinstance(exc, ClientError) else type(exc).__name__
+            self._error_migracion(report, code)
+            exc.reporte = report
+            raise
+        finally:
+            report["duracion_ms"] = round((time.perf_counter() - started) * 1000, 3)
+
+    def revertir_migracion(self, migracion_id: str, lote: int = 25) -> dict:
+        """Restaura copias exactas solo con la marca propia; conserva conflictos."""
+        if migracion_id != MIGRACION_ID:
+            raise ValueError("migracion_id no soportado.")
+        if type(lote) is not int or lote < 1:
+            raise ValueError("lote debe ser un entero positivo.")
+        report, started = self._reporte_migracion(), time.perf_counter()
+        arguments = dict(KeyConditionExpression=Key("PK").eq(f"MIG#{migracion_id}"),
+                         ConsistentRead=True, Limit=lote)
+        try:
+            while True:
+                page = self.migration_table.query(**arguments)
+                changed, error_start = 0, len(report["errores"])
+                try:
+                    for backup in page["Items"]:
+                        report["escaneadas"] += 1
+                        original = backup["documento"]
+                        try:
+                            self.resource.meta.client.transact_write_items(TransactItems=[
+                                {"Put": dict(TableName=self.table_name, Item=original,
+                                             ConditionExpression="migracion_id = :id",
+                                             ExpressionAttributeValues={":id": migracion_id})},
+                                {"Delete": dict(TableName=self.migration_table_name,
+                                                Key={name: backup[name] for name in ("PK", "SK")},
+                                                ConditionExpression="attribute_exists(PK)")},
+                            ], ReturnConsumedCapacity="TOTAL")
+                        except ClientError as exc:
+                            if self._condicion_cancelada(exc):
+                                report["no_revertible"] += 1
+                                report["omitidas"] += 1
+                                self._error_migracion(report, "NoRevertible")
+                            else:
+                                report["fallidas"] += 1
+                                self._error_migracion(report, exc.response["Error"]["Code"])
+                            continue
+                        report["revertidas"] += 1
+                        changed += 1
+                finally:
+                    if page["Items"]:
+                        self._auditar_lote_migracion(report, "revertir_migracion", changed, report["errores"][error_start:])
+                cursor = page.get("LastEvaluatedKey")
+                if not cursor:
+                    return report
+                arguments["ExclusiveStartKey"] = cursor
+        except (BotoCoreError, ClientError) as exc:
+            report["fallidas"] += 1
+            code = exc.response["Error"]["Code"] if isinstance(exc, ClientError) else type(exc).__name__
+            self._error_migracion(report, code)
+            exc.reporte = report
+            raise
+        finally:
+            report["duracion_ms"] = round((time.perf_counter() - started) * 1000, 3)
 
     @staticmethod
     def build_alerta(*, lectura_id: int, umbral_id: int, estado: str, severidad: str,
