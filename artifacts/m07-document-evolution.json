@@ -1,0 +1,287 @@
+{
+  "schema": "m07-document-evolution/1",
+  "generated_at": "2026-10-26T01:29:07.807353+00:00",
+  "synthetic_fixtures": true,
+  "source": "tests/test_m07_document_migration.py contra DynamoDB Local (docker-compose.yml)",
+  "adr": "docs/ADR-007-evolucion-compatible.md",
+  "migracion_id": "m07-v1-a-v2",
+  "pytest": {
+    "total": 7,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0
+  },
+  "casos": [
+    {
+      "id": "M07-N1",
+      "prueba": "test_normal_migra_las_v1_y_deja_intactas_las_v2",
+      "criterio": "migra las 40 v1, las 80 v2 quedan intactas y Q1 devuelve lo mismo antes y despues",
+      "esperado": {
+        "escaneadas": 120,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 0,
+        "fallidas": 0,
+        "migradas_en_tabla": 40,
+        "v2_intactas": 80,
+        "respaldos": 40,
+        "q1_total": 120,
+        "q1_igual": true
+      },
+      "obtenido": {
+        "escaneadas": 120,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 0,
+        "fallidas": 0,
+        "migradas_en_tabla": 40,
+        "v2_intactas": 80,
+        "respaldos": 40,
+        "q1_total": 120,
+        "q1_igual": true
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-L1",
+      "prueba": "test_limite_segunda_corrida_no_cambia_nada",
+      "criterio": "la segunda corrida migra 0 y no modifica ni la tabla ni los respaldos",
+      "esperado": {
+        "migradas": 0,
+        "migrables": 0,
+        "ya_v2": 120,
+        "fallidas": 0,
+        "tabla_igual": true,
+        "respaldos_iguales": true,
+        "respaldos": 40
+      },
+      "obtenido": {
+        "migradas": 0,
+        "migrables": 0,
+        "ya_v2": 120,
+        "fallidas": 0,
+        "tabla_igual": true,
+        "respaldos_iguales": true,
+        "respaldos": 40
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-L2",
+      "prueba": "test_limite_interrupcion_y_reanudacion_sin_duplicar",
+      "criterio": "si la migracion se interrumpe a la mitad, reanudar termina las 40 sin duplicar nada",
+      "esperado": {
+        "parcial_migradas": 30,
+        "v1_restantes_tras_interrupcion": 10,
+        "respaldos_tras_interrupcion": 30,
+        "reanudacion_migradas": 10,
+        "reanudacion_ya_v2": 110,
+        "migradas_total": 40,
+        "respaldos_finales": 40,
+        "respaldos_sk_unicos": 40,
+        "items_en_tabla": 120,
+        "v1_restantes_final": 0
+      },
+      "obtenido": {
+        "parcial_migradas": 30,
+        "v1_restantes_tras_interrupcion": 10,
+        "respaldos_tras_interrupcion": 30,
+        "reanudacion_migradas": 10,
+        "reanudacion_ya_v2": 110,
+        "migradas_total": 40,
+        "respaldos_finales": 40,
+        "respaldos_sk_unicos": 40,
+        "items_en_tabla": 120,
+        "v1_restantes_final": 0
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-F1",
+      "prueba": "test_fallo_declarado_schema_version_3_se_reporta_y_no_se_modifica",
+      "criterio": "un documento con schemaVersion 3 se omite, se reporta como VersionDesconocida y queda identico",
+      "esperado": {
+        "escaneadas": 121,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 1,
+        "errores": [
+          {
+            "codigo_error": "VersionDesconocida"
+          }
+        ],
+        "v3_intacto": true,
+        "respaldos": 40,
+        "lectura_directa": "VersionDesconocida"
+      },
+      "obtenido": {
+        "escaneadas": 121,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 1,
+        "errores": [
+          {
+            "codigo_error": "VersionDesconocida"
+          }
+        ],
+        "v3_intacto": true,
+        "respaldos": 40,
+        "lectura_directa": "VersionDesconocida"
+      },
+      "codigo_error": "VersionDesconocida",
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-T1",
+      "prueba": "test_transicion_con_migracion_a_medias_todo_sigue_legible",
+      "criterio": "con la migracion a medias, v1, v2 nativa y v2 migrada se leen al mismo formato",
+      "esperado": {
+        "claves_comunes_iguales": true,
+        "solo_la_migrada_trae_migracion_id": true,
+        "versiones": [
+          1,
+          2,
+          2
+        ],
+        "fuentes": [
+          "desconocida",
+          "fixture",
+          "migrada"
+        ],
+        "q1_total": 120,
+        "q1_igual_a_antes": true
+      },
+      "obtenido": {
+        "claves_comunes_iguales": true,
+        "solo_la_migrada_trae_migracion_id": true,
+        "versiones": [
+          1,
+          2,
+          2
+        ],
+        "fuentes": [
+          "desconocida",
+          "fixture",
+          "migrada"
+        ],
+        "q1_total": 120,
+        "q1_igual_a_antes": true
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-R1",
+      "prueba": "test_rollback_deja_las_v1_identicas_y_las_v2_intactas",
+      "criterio": "revertir deja las 40 v1 iguales campo por campo al respaldo, las 80 v2 intactas y la segunda reversa no hace nada",
+      "esperado": {
+        "escaneadas": 121,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 1,
+        "segunda_corrida_migradas": 0,
+        "respaldos_creados": 40,
+        "revertidas": 40,
+        "no_revertible": 0,
+        "segunda_corrida_revertidas": 0,
+        "segunda_corrida_escaneadas": 0,
+        "diferencias_campo_tras_rollback": 0,
+        "v1_restauradas_sin_campos_nuevos": 40,
+        "v2_originales_intactas": 80,
+        "tabla_identica_a_la_inicial": true,
+        "respaldos_tras_rollback": 0,
+        "consultas_iguales_antes_despues": true
+      },
+      "obtenido": {
+        "escaneadas": 121,
+        "migradas": 40,
+        "ya_v2": 80,
+        "version_desconocida": 1,
+        "segunda_corrida_migradas": 0,
+        "respaldos_creados": 40,
+        "revertidas": 40,
+        "no_revertible": 0,
+        "segunda_corrida_revertidas": 0,
+        "segunda_corrida_escaneadas": 0,
+        "diferencias_campo_tras_rollback": 0,
+        "v1_restauradas_sin_campos_nuevos": 40,
+        "v2_originales_intactas": 80,
+        "tabla_identica_a_la_inicial": true,
+        "respaldos_tras_rollback": 0,
+        "consultas_iguales_antes_despues": true
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    },
+    {
+      "id": "M07-A1",
+      "prueba": "test_auditoria_un_registro_por_lote_sin_secretos",
+      "criterio": "cada lote migrado o revertido deja su registro con conteo y sin valor, payload, endpoint ni campos fuera de la lista blanca",
+      "esperado": {
+        "hay_lotes": true,
+        "lotes_migrar_suman": 40,
+        "lotes_revertir_suman": 40,
+        "actor_roles": [
+          "migracion"
+        ],
+        "motivos": [
+          "m07_v1_a_v2"
+        ],
+        "resultados": [
+          "ok"
+        ],
+        "sin_valor_ni_payload": true,
+        "campos_extra": [],
+        "valores_con_secreto": []
+      },
+      "obtenido": {
+        "hay_lotes": true,
+        "lotes_migrar_suman": 40,
+        "lotes_revertir_suman": 40,
+        "actor_roles": [
+          "migracion"
+        ],
+        "motivos": [
+          "m07_v1_a_v2"
+        ],
+        "resultados": [
+          "ok"
+        ],
+        "sin_valor_ni_payload": true,
+        "campos_extra": [],
+        "valores_con_secreto": []
+      },
+      "codigo_error": null,
+      "resultado": "ok"
+    }
+  ],
+  "migracion": {
+    "reanudacion_migradas_total": 40,
+    "escaneadas": 121,
+    "migradas": 40,
+    "ya_v2": 80,
+    "version_desconocida": 1,
+    "segunda_corrida_migradas": 0,
+    "respaldos_creados": 40,
+    "revertidas": 40,
+    "segunda_corrida_revertidas": 0,
+    "diferencias_campo_tras_rollback": 0,
+    "v2_originales_intactas": 80,
+    "consultas_iguales_antes_despues": true,
+    "duracion_ms": 839.753,
+    "duracion_rollback_ms": 848.214
+  },
+  "coverage": {
+    "normal_migra_v1_deja_v2_y_consultas_iguales": true,
+    "limite_1_segunda_corrida_no_cambia_nada": true,
+    "limite_2_interrupcion_y_reanudacion": true,
+    "fallo_declarado_version_desconocida": true,
+    "transicion_version_anterior_legible": true,
+    "rollback_identico_al_respaldo": true,
+    "auditoria_por_lote_sin_secretos": true
+  },
+  "all_required_cases_passed": true
+}
