@@ -1,6 +1,6 @@
 {
   "assignmentId": "m07-document-evolution",
-  "commitSha": "3d46f9168c065c66986bc6d4da7e11dfe7b57829",
+  "commitSha": "7725fb8033c8befec0600534db5bf6a3a6d4ce2b",
   "commands": [
     "make setup",
     "make verify",
@@ -22,7 +22,7 @@
   "limitations": [
     "DynamoDB Local no implementa PITR ni valida IAM; el respaldo logico cubre el rollback probado del lote.",
     "Las duraciones medidas en local no se extrapolan a produccion.",
-    "En esta sesion make no esta instalado y Docker Desktop rechazo la conexion al engine; make verify integrado quedo sin ejecutar."
+    "make verify se ejecuto en Windows con bash scripts/verify_base.sh (equivalente al objetivo verify, porque make no esta instalado en esa maquina); paso con 9 pruebas generales y 7 de M07."
   ]
 }
 
