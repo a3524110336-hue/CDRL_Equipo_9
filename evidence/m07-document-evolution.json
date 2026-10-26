@@ -1,0 +1,28 @@
+{
+  "assignmentId": "m07-document-evolution",
+  "commitSha": "3d46f9168c065c66986bc6d4da7e11dfe7b57829",
+  "commands": [
+    "make setup",
+    "make verify",
+    "make migrate-docs",
+    "make rollback-docs"
+  ],
+  "results": {
+    "compatibilidad": "La API lee documentos v1 y v2 durante la migracion; el fixture confirma consultas Q1 equivalentes.",
+    "migracion": "40 lecturas v1 migradas, 80 v2 intactas; segunda corrida con 0 cambios; interrupcion reanudada hasta 40.",
+    "rollback": "40 revertidas, 80 v2 intactas y 0 diferencias de campo respecto a los respaldos.",
+    "fallos": "schemaVersion 3 se reporta como VersionDesconocida y no se modifica.",
+    "auditoria": "Un registro por lote sin valor, payload, endpoint ni campos fuera de lista blanca.",
+    "artifact": "artifacts/m07-document-evolution.json se genero con el builder y reporta 7/7 casos; verify_base.sh ahora lo regenera dentro de make verify."
+  },
+  "assumptions": [
+    "DynamoDB Local es el entorno de respaldo; fixtures sinteticos con semilla 42.",
+    "Los contratos y limites de compatibilidad son los de docs/ADR-007-evolucion-compatible.md."
+  ],
+  "limitations": [
+    "DynamoDB Local no implementa PITR ni valida IAM; el respaldo logico cubre el rollback probado del lote.",
+    "Las duraciones medidas en local no se extrapolan a produccion.",
+    "En esta sesion make no esta instalado y Docker Desktop rechazo la conexion al engine; make verify integrado quedo sin ejecutar."
+  ]
+}
+

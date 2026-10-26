@@ -14,6 +14,7 @@ required_files=(
   "evidence/m04-nosql-decision.json"
   "evidence/m05-document-store.json"
   "evidence/m06-evolution-recovery.json"
+  "evidence/m07-document-evolution.json"
 )
 
 for required in "${required_files[@]}"; do
@@ -25,7 +26,7 @@ import json
 from pathlib import Path
 
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
-for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json", "evidence/m06-evolution-recovery.json"):
+for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json", "evidence/m06-evolution-recovery.json", "evidence/m07-document-evolution.json"):
     payload = json.loads(Path(name).read_text(encoding="utf-8"))
     missing = sorted(required.difference(payload))
     if missing:
@@ -121,6 +122,9 @@ if [ -x ".venv/bin/python" ]; then
   PYTHON_RUN=".venv/bin/python"
 fi
 $PYTHON_RUN scripts/build_m06_artifact.py
+
+# M07: reporte por caso y mediciones de migracion, reanudacion y rollback.
+$PYTHON_RUN scripts/build_m07_artifact.py
 
 python3 - <<'PY'
 import json
