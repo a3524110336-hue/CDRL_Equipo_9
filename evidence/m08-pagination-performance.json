@@ -1,6 +1,6 @@
 {
     "assignmentId":  "m08-pagination-performance",
-    "commitSha":  "pendiente",
+    "commitSha":  "9fa3eb2474025f2d35127305fd73fa0dc178841f",
     "commands":  [
                      "bash scripts/verify_base.sh (equivalente a make verify)",
                      "scripts/bench_m08.py --salida artifacts/m08-benchmark-completa.json"
