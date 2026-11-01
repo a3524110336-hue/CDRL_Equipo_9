@@ -1,4 +1,4 @@
-.PHONY: setup verify run migrate migrate-docs rollback-docs backfill-gsi2
+.PHONY: setup verify run migrate migrate-docs rollback-docs backfill-gsi2 bench
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
@@ -26,3 +26,6 @@ verify:
 
 run:
 	@docker compose up --build
+
+bench:
+	@$(PYTHON) scripts/bench_m08.py --salida artifacts/m08-benchmark-completa.json
