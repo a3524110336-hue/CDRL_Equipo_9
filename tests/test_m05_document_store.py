@@ -220,10 +220,11 @@ def test_fallo_declarado_documento_invalido_no_escribe_nada(store):
 def test_q1_a_q4_usan_query_a_indice_declarado_nunca_scan(store):
     indexes = json.loads(INDEXES_PATH.read_text(encoding="utf-8"))
     queries = indexes["queries"]
-    assert {q["id"] for q in queries} == {"Q1", "Q2", "Q3", "Q4"}
+    declarados = {"TABLE"} | {i["IndexName"] for i in indexes["table"]["GlobalSecondaryIndexes"]}
+    assert {"Q1", "Q2", "Q3", "Q4"} <= {q["id"] for q in queries}
     for q in queries:
         assert q["operation"] == "Query", f"{q['id']} debe usar Query, no {q['operation']}"
-        assert q["index"] in {"TABLE", "GSI1"}, f"{q['id']} declara un indice desconocido"
+        assert q["index"] in declarados, f"{q['id']} declara un indice desconocido"
 
     def _scan_prohibido(*args, **kwargs):
         raise AssertionError("Q1-Q4 no deben llamar a Scan")

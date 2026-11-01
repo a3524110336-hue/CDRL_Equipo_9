@@ -35,8 +35,9 @@ tests_summary = [
 ]
 
 indexes = json.loads((ROOT / "db" / "nosql" / "indexes.json").read_text(encoding="utf-8"))
+declared_indexes = {"TABLE"} | {i["IndexName"] for i in indexes["table"]["GlobalSecondaryIndexes"]}
 queries_use_query_not_scan = all(
-    q["operation"] == "Query" and q["index"] in {"TABLE", "GSI1"} for q in indexes["queries"]
+    q["operation"] == "Query" and q["index"] in declared_indexes for q in indexes["queries"]
 )
 
 REQUIRED_TESTS = {

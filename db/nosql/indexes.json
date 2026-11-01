@@ -1,6 +1,7 @@
 {
   "schema": "cdrl-nosql-indexes/1",
   "adr": "docs/ADR-005-almacen-documental.md",
+  "adr_cambios": ["docs/ADR-008-paginacion-indices-rendimiento.md"],
   "description": "Indices declarados del almacen documental de eventos. ensure_table() compara la tabla real contra este archivo; una consulta que no aparece aqui no existe.",
   "table": {
     "TableNameEnv": "DYNAMODB_TABLE",
@@ -14,7 +15,8 @@
       {"AttributeName": "PK", "AttributeType": "S"},
       {"AttributeName": "SK", "AttributeType": "S"},
       {"AttributeName": "GSI1PK", "AttributeType": "S"},
-      {"AttributeName": "GSI1SK", "AttributeType": "S"}
+      {"AttributeName": "GSI1SK", "AttributeType": "S"},
+      {"AttributeName": "GSI2PK", "AttributeType": "S"}
     ],
     "GlobalSecondaryIndexes": [
       {
@@ -26,13 +28,24 @@
         "Projection": {"ProjectionType": "ALL"},
         "Sparse": true,
         "Entities": ["alerta"]
+      },
+      {
+        "IndexName": "GSI2",
+        "KeySchema": [
+          {"AttributeName": "GSI2PK", "KeyType": "HASH"},
+          {"AttributeName": "SK", "KeyType": "RANGE"}
+        ],
+        "Projection": {"ProjectionType": "ALL"},
+        "Sparse": true,
+        "Entities": ["lectura"]
       }
     ]
   },
   "key_formats": {
     "lectura": {
       "PK": "EQ#{equipo_codigo}#{metrica}",
-      "SK": "TS#{medido_en_utc}#{lectura_id:019d}"
+      "SK": "TS#{medido_en_utc}#{lectura_id:019d}",
+      "GSI2PK": "EQ#{equipo_codigo}"
     },
     "alerta": {
       "PK": "LECTURA#{lectura_id:019d}",
@@ -44,7 +57,8 @@
       "medido_en_utc": "ISO 8601 en UTC con microsegundos y Z, por ejemplo 2026-10-03T16:00:00.000000Z",
       "019d": "Enteros positivos de 64 bits rellenados a 19 digitos para conservar el orden numerico",
       "shard": "SHA-256 de LECTURA#<id>#UMBRAL#<id>, primeros 8 bytes big-endian, modulo 4",
-      "severidad_rango": "advertencia = 1, critica = 2; el orden descendente pone primero las criticas"
+      "severidad_rango": "advertencia = 1, critica = 2; el orden descendente pone primero las criticas",
+      "GSI2": "La clave de rango del GSI2 es el mismo atributo SK de la tabla: el orden de Q5 es identico al de Q1 sin filtro de metrica. Solo las lecturas llevan GSI2PK; las alertas no entran al indice."
     }
   },
   "alert_shards": 4,
@@ -97,6 +111,20 @@
       "client_side": "mezcla de los 4 shards; antes de cambiar una alerta se relee con GetItem fuerte en la tabla base",
       "consistency": "eventual (los GSI no admiten lectura fuerte)",
       "function": "EventsStore.query_alertas"
+    },
+    {
+      "id": "Q5",
+      "name": "LECTURAS_POR_EQUIPO",
+      "index": "GSI2",
+      "operation": "Query",
+      "key_condition": "GSI2PK = EQ#<equipo> AND SK BETWEEN TS#<desde># AND TS#<hasta>#~",
+      "scan_index_forward": false,
+      "limit": "1..1000 por pagina",
+      "calls": "1 por pagina; mas solo si DynamoDB corta en 1 MiB antes de llenar el limite",
+      "client_side": "nada: el orden ya viene del indice; el cursor opaco lleva equipo, desde, hasta y la ultima clave",
+      "consistency": "eventual (los GSI no admiten lectura fuerte)",
+      "baseline": "Q1 sin filtro de metrica (5 Query y mezcla en el cliente)",
+      "function": "EventsStore.paginar_lecturas_equipo"
     }
   ],
   "operations": [
