@@ -7,6 +7,8 @@ solo la tabla base admite lectura fuerte. Se valida antes de escribir; los
 duplicados y fallos de conexión conservan sus códigos de boto3.
 """
 
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -21,7 +23,7 @@ from uuid import uuid4
 from urllib.parse import urlsplit
 
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Attr, Key
 from boto3.dynamodb.types import DYNAMODB_CONTEXT
 from botocore.config import Config
 from botocore.exceptions import (
@@ -52,6 +54,10 @@ _TRANSICIONES = {"abierta": {"reconocida", "cerrada"}, "reconocida": {"cerrada"}
 
 class DocumentoInvalido(ValueError):
     """El documento rompe el contrato; no se efectuó la escritura."""
+
+
+class CursorInvalido(ValueError):
+    """Cursor fuera del contrato de Q5; no se consultó DynamoDB."""
 
 
 class DocumentoDemasiadoGrande(DocumentoInvalido):
@@ -273,6 +279,33 @@ class EventsStore:
                            sorted(index["Projection"].get("NonKeyAttributes", []))) for index in entries)
 
         actual_indexes = description.get("GlobalSecondaryIndexes", [])
+        missing = [index for index in indexes
+                   if index["IndexName"] not in {actual["IndexName"] for actual in actual_indexes}]
+        missing_attributes = {key["AttributeName"] for index in missing for key in index["KeySchema"]}
+        present_attributes = {entry["AttributeName"] for entry in description["AttributeDefinitions"]}
+        expected_existing_attributes = [entry for entry in spec["AttributeDefinitions"]
+                                        if entry["AttributeName"] not in missing_attributes
+                                        or entry["AttributeName"] in present_attributes]
+        if missing and (
+                pairs(description["KeySchema"], "KeyType") == pairs(spec["KeySchema"], "KeyType")
+                and pairs(description["AttributeDefinitions"], "AttributeType") == pairs(expected_existing_attributes, "AttributeType")
+                and index_shape(actual_indexes) == index_shape([index for index in indexes if index not in missing])
+                and not description.get("LocalSecondaryIndexes")):
+            for index in missing:
+                client.update_table(TableName=table_name,
+                                    AttributeDefinitions=spec["AttributeDefinitions"],
+                                    GlobalSecondaryIndexUpdates=[{"Create": index}])
+                for _ in range(120):
+                    description = client.describe_table(TableName=table_name)["Table"]
+                    if (description.get("TableStatus") == "ACTIVE"
+                            and any(actual["IndexName"] == index["IndexName"]
+                                    and actual.get("IndexStatus") == "ACTIVE"
+                                    for actual in description.get("GlobalSecondaryIndexes", []))):
+                        break
+                    time.sleep(1)
+                else:
+                    raise ValueError("El índice no llegó a ACTIVE; reintenta cuando termine su creación.")
+            actual_indexes = description.get("GlobalSecondaryIndexes", [])
         if (pairs(description["KeySchema"], "KeyType") != pairs(spec["KeySchema"], "KeyType")
                 or pairs(description["AttributeDefinitions"], "AttributeType") != pairs(spec["AttributeDefinitions"], "AttributeType")
                 or index_shape(actual_indexes) != index_shape(indexes)
@@ -301,6 +334,7 @@ class EventsStore:
         item = {
             "PK": f"EQ#{validated.equipo_codigo}#{validated.metrica}",
             "SK": f"TS#{instant}#{identity}",
+            "GSI2PK": f"EQ#{validated.equipo_codigo}",
             "entidad": "lectura", "lectura_id": lectura_id,
             "schemaVersion": 2, "fuente": fuente, "registrado_en": _utc(datetime.now(timezone.utc)),
             "equipo_codigo": validated.equipo_codigo, "metrica": validated.metrica,
@@ -545,6 +579,117 @@ class EventsStore:
         page = self.table.query(**arguments)
         page["Items"] = [normalizar_lectura(item) for item in page["Items"]]
         return page
+
+    def paginar_lecturas_equipo(self, equipo_codigo: str, *, desde=None, hasta=None,
+                                limite: int = 100, cursor: str | None = None) -> dict:
+        """Q5: ventana fija y continuación por SK, con un item de anticipación."""
+        position = None
+        if cursor is not None:
+            try:
+                if not isinstance(cursor, str) or re.fullmatch(r"[A-Za-z0-9_-]+", cursor) is None:
+                    raise ValueError("base64url inválido")
+                decoded = base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True)
+                state = json.loads(decoded)
+                if (not isinstance(state, dict)
+                        or set(state) != {"v", "equipo", "desde", "hasta", "ultima"}
+                        or type(state["v"]) is not int or state["v"] != 1
+                        or state["equipo"] != equipo_codigo
+                        or not isinstance(state["hasta"], str)
+                        or (state["desde"] is not None and not isinstance(state["desde"], str))):
+                    raise ValueError("contrato inválido")
+                if (_utc(state["hasta"]) != state["hasta"]
+                        or (state["desde"] is not None and _utc(state["desde"]) != state["desde"])
+                        or (desde is not None and _utc(desde) != state["desde"])
+                        or (hasta is not None and _utc(hasta) != state["hasta"])):
+                    raise ValueError("ventana distinta")
+                position = state["ultima"]
+                if (not isinstance(position, dict) or set(position) != {"PK", "SK"}
+                        or position["PK"] not in {f"EQ#{equipo_codigo}#{metric}" for metric in METRICAS}
+                        or not isinstance(position["SK"], str)):
+                    raise ValueError("clave inválida")
+                match = re.fullmatch(r"TS#(.+)#([0-9]{19})", position["SK"])
+                if (not match or _utc(match[1]) != match[1] or _id(int(match[2])) != match[2]
+                        or match[1] > state["hasta"]
+                        or (state["desde"] is not None and match[1] < state["desde"])):
+                    raise ValueError("posición fuera de ventana")
+                desde, hasta = state["desde"], state["hasta"]
+                query = ConsultaLecturas(equipo=equipo_codigo, desde=desde, hasta=hasta, limite=limite)
+            except (ValueError, TypeError, KeyError, binascii.Error, UnicodeError) as exc:
+                raise CursorInvalido("Cursor inválido para el equipo y la ventana solicitados.") from exc
+        else:
+            query = ConsultaLecturas(equipo=equipo_codigo, desde=desde,
+                                     hasta=hasta if hasta is not None else datetime.now(timezone.utc), limite=limite)
+        start = _utc(query.desde) if query.desde is not None else None
+        end = _utc(query.hasta)
+        condition = Key("GSI2PK").eq(f"EQ#{query.equipo}") & Key("SK").between(
+            f"TS#{start}#" if start else "TS#", f"TS#{end}#~")
+        arguments = dict(IndexName="GSI2", KeyConditionExpression=condition,
+                         ScanIndexForward=False, ReturnConsumedCapacity="INDEXES")
+        if position is not None:
+            arguments["ExclusiveStartKey"] = dict(position, GSI2PK=f"EQ#{query.equipo}")
+        items = []
+        while len(items) < query.limite + 1:
+            page = self.table.query(**arguments, Limit=query.limite + 1 - len(items))
+            items.extend(page["Items"])
+            if not page.get("LastEvaluatedKey"):
+                break
+            arguments["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+        next_cursor = None
+        if len(items) > query.limite:
+            last = items[query.limite - 1]
+            state = dict(v=1, equipo=query.equipo, desde=start, hasta=end,
+                         ultima={key: last[key] for key in ("PK", "SK")})
+            next_cursor = base64.urlsafe_b64encode(json.dumps(state, separators=(",", ":")).encode()).decode().rstrip("=")
+        return {"items": [normalizar_lectura(item) for item in items[:query.limite]], "cursor": next_cursor}
+
+    def backfill_gsi2(self, *, dry_run: bool = True) -> dict:
+        """Rellena solo GSI2PK, con Scan filtrado de 25 y cambios condicionales."""
+        report = dict(escaneadas=0, actualizadas=0, ya_indexadas=0, fallidas=0)
+        arguments = dict(Limit=25, FilterExpression=Attr("PK").begins_with("EQ#")
+                         & Attr("GSI2PK").not_exists())
+        while True:
+            try:
+                page = self.table.scan(**arguments)
+            except (BotoCoreError, ClientError) as exc:
+                exc.reporte = dict(report, fallidas=report["fallidas"] + 1)
+                raise
+            report["escaneadas"] += page.get("ScannedCount", len(page["Items"]))
+            updated, errors = 0, []
+            for item in page["Items"]:
+                if dry_run:
+                    continue
+                try:
+                    self.table.update_item(
+                        Key={key: item[key] for key in ("PK", "SK")},
+                        UpdateExpression="SET GSI2PK = :pk",
+                        ConditionExpression="attribute_exists(PK) AND attribute_not_exists(GSI2PK)",
+                        ExpressionAttributeValues={":pk": f"EQ#{item['equipo_codigo']}"})
+                    updated += 1
+                    report["actualizadas"] += 1
+                except ClientError as exc:
+                    code = exc.response["Error"]["Code"]
+                    if code == "ConditionalCheckFailedException":
+                        report["ya_indexadas"] += 1
+                    else:
+                        report["fallidas"] += 1
+                        errors.append(code)
+                except BotoCoreError as exc:
+                    report["fallidas"] += 1
+                    errors.append(type(exc).__name__)
+            if page["Items"] and not dry_run:
+                fields = dict(operacion="backfill_gsi2", actor_rol="migracion", entidad="lote_lecturas",
+                              clave_afectada=f"LOTE#{uuid4().hex}", conteo=updated,
+                              resultado="rechazada" if errors else "ok")
+                if errors:
+                    fields["codigo_error"] = errors[0]
+                try:
+                    self.registrar_auditoria(**fields)
+                except (BotoCoreError, ClientError) as exc:
+                    exc.reporte = dict(report, fallidas=report["fallidas"] + 1)
+                    raise
+            if not page.get("LastEvaluatedKey"):
+                return report
+            arguments["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
     def iter_lecturas(self, equipo_codigo: str, metrica: str, *, desde=None, hasta=None,
                       limite: int = 100, consistent_read: bool = False) -> Iterator[dict]:

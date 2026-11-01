@@ -1,4 +1,4 @@
-.PHONY: setup verify run migrate migrate-docs rollback-docs
+.PHONY: setup verify run migrate migrate-docs rollback-docs backfill-gsi2
 
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 
@@ -17,6 +17,9 @@ migrate-docs:
 
 rollback-docs:
 	@$(PYTHON) scripts/migrate_m07.py --rollback
+
+backfill-gsi2:
+	@$(PYTHON) scripts/backfill_m08.py --aplicar
 
 verify:
 	@bash scripts/verify_base.sh
