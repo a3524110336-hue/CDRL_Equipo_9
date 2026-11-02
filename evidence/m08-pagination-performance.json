@@ -1,8 +1,10 @@
 {
     "assignmentId":  "m08-pagination-performance",
-    "commitSha":  "9fa3eb2474025f2d35127305fd73fa0dc178841f",
+    "commitSha":  "e0a170c46f8eda34d040577fe9f7c08c4d4376e8",
+    "tag":  "week-09-final",
+    "verificationRun":  "https://github.com/a3524110336-hue/CDRL_Equipo_9/actions/runs/41363245233",
     "commands":  [
-                     "bash scripts/verify_base.sh (equivalente a make verify)",
+                     "make verify (GitHub Actions run 41363245233)",
                      "scripts/bench_m08.py --salida artifacts/m08-benchmark-completa.json"
                  ],
     "results":  {
