@@ -1,0 +1,113 @@
+{
+  "schema": "cdrl-nosql-access/1",
+  "adr": "docs/ADR-009-seguridad-nosql-auditoria.md",
+  "leading_keys_note": "Incluye la clave de particion de la tabla y la de cada GSI consultable (GSI1PK = ALERTA#..., GSI2PK = EQ#..., AUD_CLAVE = clave_afectada).",
+  "description": "Matriz de acceso del almacen documental: rol x coleccion x operacion, negada por defecto. Lo que no aparece en permisos esta prohibido. src/nosql_access.py la aplica antes de llamar a DynamoDB; scripts/build_iam_policies.py deriva de aqui las politicas IAM de db/nosql/iam/.",
+  "default": "deny",
+  "operations": ["get", "query", "put", "update", "delete", "scan"],
+  "dynamodb_actions": {
+    "get": ["dynamodb:GetItem"],
+    "query": ["dynamodb:Query"],
+    "put": ["dynamodb:PutItem"],
+    "update": ["dynamodb:UpdateItem"],
+    "delete": ["dynamodb:DeleteItem"],
+    "scan": ["dynamodb:Scan"]
+  },
+  "collections": {
+    "lecturas": {
+      "entity": "lectura",
+      "table_env": "DYNAMODB_TABLE",
+      "default_table": "cdrl_eventos",
+      "leading_keys": ["EQ#*"],
+      "indexes": ["GSI2"]
+    },
+    "alertas": {
+      "entity": "alerta",
+      "table_env": "DYNAMODB_TABLE",
+      "default_table": "cdrl_eventos",
+      "leading_keys": ["LECTURA#*", "ALERTA#*"],
+      "indexes": ["GSI1"]
+    },
+    "auditoria": {
+      "entity": "auditoria",
+      "table_env": "DYNAMODB_AUDIT_TABLE",
+      "default_table": "cdrl_auditoria",
+      "leading_keys": ["AUD#*", "LECTURA#*", "LOTE#*", "EQ#*", "MIG#*", "COLECCION#*"],
+      "indexes": ["AUD_CLAVE"]
+    },
+    "respaldo_migracion": {
+      "entity": "respaldo",
+      "table_env": "DYNAMODB_MIGRATION_TABLE",
+      "default_table": "cdrl_migracion_respaldo",
+      "leading_keys": ["MIG#*"],
+      "indexes": []
+    }
+  },
+  "roles": {
+    "cdrl_writer": {
+      "description": "API y cargador de lecturas: solo escribe documentos nuevos",
+      "actors": ["svc-api", "svc-carga"],
+      "permissions": {
+        "lecturas": ["put"],
+        "alertas": ["put"]
+      }
+    },
+    "cdrl_ops": {
+      "description": "Operador: consulta lecturas y atiende alertas",
+      "actors": ["ops-01", "ops-02"],
+      "permissions": {
+        "lecturas": ["get", "query"],
+        "alertas": ["get", "query", "update", "delete"]
+      }
+    },
+    "cdrl_auditor": {
+      "description": "Revisa la auditoria; no toca datos de operacion",
+      "actors": ["aud-01"],
+      "permissions": {
+        "auditoria": ["query"]
+      }
+    },
+    "migracion": {
+      "description": "Jobs por lotes de M07 (migrate_m07.py) y M08 (backfill_m08.py)",
+      "actors": ["job-migracion", "job-backfill"],
+      "permissions": {
+        "lecturas": ["get", "query", "scan", "put", "update"],
+        "respaldo_migracion": ["get", "query", "put", "delete"]
+      }
+    },
+    "recuperacion": {
+      "description": "Restauracion de lecturas desde respaldo (recover_m06.py)",
+      "actors": ["job-recuperacion"],
+      "permissions": {
+        "lecturas": ["get", "query", "put"]
+      }
+    },
+    "simulacro": {
+      "description": "Inyecta la falla controlada del simulacro de M06; no existe fuera de local y ci",
+      "actors": ["job-simulacro"],
+      "environments": ["local", "ci"],
+      "permissions": {
+        "lecturas": ["delete"]
+      }
+    }
+  },
+  "audit": {
+    "append": "implicita: el almacen anexa el evento con PutItem condicional (attribute_not_exists(PK)) en nombre del principal; ningun rol tiene put directo sobre auditoria",
+    "logged": [
+      "toda operacion de escritura permitida (resultado ok o rechazada)",
+      "todo intento negado por la matriz, de lectura o de escritura (resultado denegada)",
+      "toda consulta a la coleccion auditoria"
+    ],
+    "not_logged": [
+      "lecturas permitidas sobre lecturas y alertas: volumen alto y sin cambio de estado (ADR-009 seccion 5)"
+    ]
+  },
+  "rules": [
+    "Negado por defecto: rol, coleccion u operacion fuera de esta matriz lanza AccesoDenegado sin llamar a DynamoDB.",
+    "El rol sale del principal autenticado (variables de entorno CDRL_ACTOR y CDRL_ROL o el fixture de pruebas), nunca de un argumento de la operacion.",
+    "Un actor solo puede usar el rol que lo declara en actors.",
+    "scan esta prohibido para todos salvo migracion sobre lecturas.",
+    "Nadie hace update ni delete sobre auditoria.",
+    "Un rol con environments solo existe si CDRL_ENTORNO esta en esa lista."
+  ]
+}

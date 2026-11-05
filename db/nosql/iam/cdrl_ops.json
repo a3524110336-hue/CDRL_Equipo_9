@@ -1,0 +1,92 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "LecturasPermitido",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:Query"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos",
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos/index/*"
+      ],
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": [
+            "EQ#*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AlertasPermitido",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DeleteItem",
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+        "dynamodb:UpdateItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos",
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos/index/*"
+      ],
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": [
+            "LECTURA#*",
+            "ALERTA#*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AuditoriaSoloAnexar",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/cdrl_auditoria"
+      ],
+      "Condition": {
+        "ForAllValues:StringLike": {
+          "dynamodb:LeadingKeys": [
+            "AUD#*",
+            "OP#*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AuditoriaInmutable",
+      "Effect": "Deny",
+      "Action": [
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/cdrl_auditoria",
+        "arn:aws:dynamodb:*:*:table/cdrl_auditoria/index/*"
+      ]
+    },
+    {
+      "Sid": "SinScan",
+      "Effect": "Deny",
+      "Action": [
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:*:*:table/cdrl_auditoria",
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos",
+        "arn:aws:dynamodb:*:*:table/cdrl_migracion_respaldo",
+        "arn:aws:dynamodb:*:*:table/cdrl_auditoria/index/*",
+        "arn:aws:dynamodb:*:*:table/cdrl_eventos/index/*",
+        "arn:aws:dynamodb:*:*:table/cdrl_migracion_respaldo/index/*"
+      ]
+    }
+  ]
+}
