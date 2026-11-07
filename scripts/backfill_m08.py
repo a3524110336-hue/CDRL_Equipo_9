@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ if __package__ in (None, ""):
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.events_store import EventsStore
+from src.nosql_access import Principal
 
 
 def main(argv=None) -> int:
@@ -20,7 +22,8 @@ def main(argv=None) -> int:
     mode.add_argument("--aplicar", action="store_true", help="Rellena GSI2PK y audita cada lote.")
     args = parser.parse_args(argv)
     try:
-        store = EventsStore()
+        store = EventsStore(principal=Principal(os.getenv("CDRL_ACTOR", "job-backfill"),
+                                                os.getenv("CDRL_ROL", "migracion")))
         if args.aplicar:
             store.ensure_table()
         report = store.backfill_gsi2(dry_run=args.dry_run)

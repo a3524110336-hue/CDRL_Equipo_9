@@ -14,11 +14,11 @@ from uuid import uuid4
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from boto3.dynamodb.conditions import Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 from botocore.exceptions import ClientError
 
 from src.events_store import EventsStore, normalizar_lectura
+from src.nosql_access import Principal
 
 ROOT = Path(__file__).resolve().parents[1]
 METRICAS = ("cpu", "memoria")
@@ -33,15 +33,13 @@ def query_fixture(store):
     """Documentos originales paginados, sin upcast, Scan ni pérdida de precisión."""
     items = []
     for metric in METRICAS:
-        arguments = dict(KeyConditionExpression=Key("PK").eq(f"EQ#{EQUIPO}#{metric}"),
-                         ConsistentRead=True, Limit=25)
+        cursor = None
         while True:
-            page = store.table.query(**arguments)
+            page = store.query_documentos_lectura(EQUIPO, metric, cursor=cursor, limite=25)
             items.extend(page["Items"])
             cursor = page.get("LastEvaluatedKey")
             if not cursor:
                 break
-            arguments["ExclusiveStartKey"] = cursor
     return sorted(items, key=lambda item: (item["PK"], item["SK"]))
 
 
@@ -50,11 +48,11 @@ def restaurar_faltantes(store, items):
     restored, existed = 0, 0
     for item in items:
         normalizar_lectura(item)  # No convertir v1 al persistir.
-        if store.table.get_item(Key=_key(item), ConsistentRead=True).get("Item") is not None:
+        if store.get_documento_lectura(_key(item)) is not None:
             existed += 1
             continue
         try:
-            store.table.put_item(Item=item, ConditionExpression="attribute_not_exists(PK)")
+            store.put_documento_lectura(item)
             restored += 1
         except ClientError as exc:
             if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
@@ -66,7 +64,7 @@ def restaurar_faltantes(store, items):
 def _compare(store, originals):
     missing, differences = 0, 0
     for expected in originals:
-        actual = store.table.get_item(Key=_key(expected), ConsistentRead=True).get("Item")
+        actual = store.get_documento_lectura(_key(expected))
         if actual is None:
             missing += 1
         else:
@@ -84,7 +82,8 @@ def recover_m06(store=None, *, backup_dir=None):
     Conserva el respaldo externo y elimina la tabla restore incluso si falla.
     """
     run_id = uuid4().hex
-    store = store or EventsStore(table_name=f"cdrl_eventos_fixture_{run_id}")
+    store = store or EventsStore(table_name=f"cdrl_eventos_fixture_{run_id}",
+                                principal=Principal("job-recuperacion", "recuperacion"))
     store.ensure_table()
     if query_fixture(store):
         raise ValueError("El fixture M06 requiere particiones vacías; usa una tabla aislada.")
@@ -105,7 +104,7 @@ def recover_m06(store=None, *, backup_dir=None):
             item = store.build_lectura(number + 1, reading, fuente="fixture")
             for name in ("schemaVersion", "fuente", "registrado_en"):
                 del item[name]
-            store.table.put_item(Item=item, ConditionExpression="attribute_not_exists(PK)")
+            store.put_documento_lectura(item)
         else:
             store.put_lectura(number + 1, reading, fuente="fixture")
 
@@ -127,16 +126,16 @@ def recover_m06(store=None, *, backup_dir=None):
 
     # 4. Exactamente diez v1 y veinte v2, sin tocar otras particiones.
     deleted = [item for item in originals if int(item["lectura_id"]) in set(range(1, 11)) | set(range(41, 61))]
+    simulacro = EventsStore(table_name=store.table_name, resource=store.resource,
+                            audit_table_name=store.audit_table_name,
+                            migration_table_name=store.migration_table_name,
+                            principal=Principal("job-simulacro", "simulacro"))
     for item in deleted:
-        store.table.delete_item(Key=_key(item))
-    audit_base = dict(actor_rol="recuperacion", entidad="lote_lecturas",
-                      clave_afectada=f"LOTE#{run_id}", resultado="ok")
-    store.registrar_auditoria(**audit_base, operacion="falla_controlada", conteo=len(deleted),
-                             motivo="borrado_accidental")
+        simulacro.delete_lectura(_key(item))
 
     # 5. Tabla temporal con la misma declaración e índices que eventos.
     restore = EventsStore(table_name=f"cdrl_eventos_restore_{run_id}", resource=store.resource,
-                          audit_table_name=store.audit_table_name)
+                          audit_table_name=store.audit_table_name, principal=store.principal)
     started = perf_counter()
     created = False
     try:
@@ -144,24 +143,24 @@ def recover_m06(store=None, *, backup_dir=None):
         created = True
         for line in backup.read_text(encoding="utf-8").splitlines():
             item = {name: deserializer.deserialize(value) for name, value in json.loads(line).items()}
-            restore.table.put_item(Item=item, ConditionExpression="attribute_not_exists(PK)")
+            restore.put_documento_lectura(item)
 
         # 6-7. Comparar claves, luego copiar únicamente las faltantes.
         restored_items = query_fixture(restore)
         missing_items = [item for item in restored_items
-                         if store.table.get_item(Key=_key(item), ConsistentRead=True).get("Item") is None]
+                         if store.get_documento_lectura(_key(item)) is None]
         first = restaurar_faltantes(store, missing_items)
 
         # 8. Comparación campo por campo; segunda pasada para medir idempotencia.
         missing, differences = _compare(store, originals)
         later_missing, later_differences = _compare(store, later)
-        v1 = sum("schemaVersion" not in store.table.get_item(Key=_key(item), ConsistentRead=True).get("Item", {})
+        v1 = sum("schemaVersion" not in store.get_documento_lectura(_key(item))
                  for item in deleted if "schemaVersion" not in item
-                 and store.table.get_item(Key=_key(item), ConsistentRead=True).get("Item") is not None)
+                 and store.get_documento_lectura(_key(item)) is not None)
         elapsed = round((perf_counter() - started) * 1000, 3)
         second = restaurar_faltantes(store, restored_items)
         second["faltantes_tras_restaurar"], second["diferencias_campo"] = _compare(store, originals)
-        intact = sum(store.table.get_item(Key=_key(item), ConsistentRead=True).get("Item") == item for item in later)
+        intact = sum(store.get_documento_lectura(_key(item)) == item for item in later)
         result = dict(esperados=30, **first, faltantes_tras_restaurar=missing, diferencias_campo=differences,
             v1_restauradas_sin_schemaVersion=v1, posteriores_intactas=intact,
             total_final=len(query_fixture(store)), duracion_restauracion_ms=elapsed,
@@ -175,7 +174,6 @@ def recover_m06(store=None, *, backup_dir=None):
             raise RuntimeError("La recuperación no cumple las mediciones del ADR-006.")
 
         # 9. Evidencia segura del lote y limpieza garantizada.
-        store.registrar_auditoria(**audit_base, operacion="restaurar_lecturas", conteo=first["restaurados"])
         return result
     finally:
         if created:

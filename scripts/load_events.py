@@ -3,9 +3,11 @@
 import argparse
 import hashlib
 import json
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from itertools import islice
 from time import perf_counter
 
 if __package__ in (None, ""):
@@ -14,6 +16,7 @@ if __package__ in (None, ""):
 from botocore.exceptions import ClientError
 
 from src.events_store import EventsStore, METRICAS
+from src.nosql_access import Principal
 
 UNIDADES = {
     "cpu": "porcentaje", "memoria": "porcentaje", "disco_libre": "bytes",
@@ -72,9 +75,12 @@ def main():
         EventsStore.build_lectura(sample_id, last)
     except ValueError as exc:
         parser.error(str(exc))
-    store = EventsStore()
+    store = EventsStore(principal=Principal(os.getenv("CDRL_ACTOR", "svc-carga"),
+                                            os.getenv("CDRL_ROL", "cdrl_writer")))
     store.ensure_table()
-    if args.batch and store.table.scan(Select="COUNT", Limit=1, ConsistentRead=True)["Count"]:
+    if args.batch and os.getenv("DYNAMODB_LOCAL", "false").lower() not in ("true", "1"):
+        parser.error("--batch solo está permitido en DynamoDB Local.")
+    if args.batch and store.resource.meta.client.describe_table(TableName=store.table_name)["Table"]["ItemCount"]:
         parser.error("--batch requiere una tabla vacía; usa DYNAMODB_TABLE con un nombre nuevo.")
 
     result = {"table": store.table_name, "mode": "batch" if args.batch else "conditional",
@@ -104,10 +110,11 @@ def main():
     if args.batch:
         # batch_writer agrupa 25 y reintenta UnprocessedItems; no admite condiciones.
         # Requiere una tabla dedicada sin escritores concurrentes.
-        with store.table.batch_writer() as batch:
-            for lectura_id, lectura in records():
-                batch.put_item(Item=store.build_lectura(lectura_id, lectura, fuente="lote"))
-                result["lecturas_insertadas"] += 1
+        source = records()
+        while group := list(islice(source, 25)):
+            store.put_lote_lecturas([store.build_lectura(lectura_id, lectura, fuente="lote")
+                                     for lectura_id, lectura in group])
+            result["lecturas_insertadas"] += len(group)
     else:
         for lectura_id, lectura in records():
             conditional(store.put_lectura, "lecturas", lectura_id=lectura_id, lectura=lectura, fuente="lote")

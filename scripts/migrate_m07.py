@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ if __package__ in (None, ""):
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.events_store import EventsStore, MIGRACION_ID
+from src.nosql_access import Principal
 
 
 def main(argv=None) -> int:
@@ -24,7 +26,8 @@ def main(argv=None) -> int:
     if args.lote < 1:
         parser.error("--lote debe ser positivo")
     try:
-        store = EventsStore()
+        store = EventsStore(principal=Principal(os.getenv("CDRL_ACTOR", "job-migracion"),
+                                                os.getenv("CDRL_ROL", "migracion")))
         if not args.dry_run:
             store.ensure_table()
         if args.rollback:

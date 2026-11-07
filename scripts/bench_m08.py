@@ -35,6 +35,7 @@ os.environ.setdefault("DYNAMODB_LOCAL", "true")
 import boto3
 
 from src.events_store import EventsStore, METRICAS
+from src.nosql_access import Principal
 
 EQUIPOS = [f"fixture-m08-{n:02d}" for n in range(5)]
 SEMILLA = 42
@@ -156,8 +157,7 @@ def _costo_escritura(store):
     sin.pop("GSI2PK", None)
     cap = {}
     for nombre, item in (("con", con), ("sin", sin)):
-        respuesta = store.table.put_item(Item=item, ConditionExpression="attribute_not_exists(PK)",
-                                         ReturnConsumedCapacity="INDEXES")
+        respuesta = store.put_documento_lectura(item, capacidad="INDEXES")
         cap[nombre] = float(respuesta["ConsumedCapacity"]["CapacityUnits"])
     tam_con = len(json.dumps(con, default=str).encode("utf-8"))
     tam_sin = len(json.dumps(sin, default=str).encode("utf-8"))
@@ -192,14 +192,18 @@ def ejecutar(escala):
     k = cfg["k"]
     corrida = uuid.uuid4().hex[:12]
     store = EventsStore(table_name=f"m08_bench_{corrida}", audit_table_name=f"m08_bench_aud_{corrida}",
-                        migration_table_name=f"m08_bench_resp_{corrida}")
+                        migration_table_name=f"m08_bench_resp_{corrida}",
+                        principal=Principal("svc-carga", "cdrl_writer"))
     store.ensure_table()
     try:
         inicio = time.perf_counter()
         total = cargar(store, cfg["por_serie"])
         carga_s = round(time.perf_counter() - inicio, 1)
 
-        muestras, acumulado, ids = _medir(store, _variantes(store, EQUIPOS[0], k))
+        reader = EventsStore(table_name=store.table_name, audit_table_name=store.audit_table_name,
+                             migration_table_name=store.migration_table_name, resource=store.resource,
+                             principal=Principal("ops-01", "cdrl_ops"))
+        muestras, acumulado, ids = _medir(reader, _variantes(reader, EQUIPOS[0], k))
         if acumulado["A1"]["llamadas"] == 0:
             raise SystemExit("el medidor no intercepto las consultas de la linea base")
         iguales = (ids["A1"] == ids["B1"] and ids["A10"] == ids["B10"]

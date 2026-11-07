@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import time
+from functools import wraps
 from datetime import datetime, timezone
 from decimal import Decimal, DecimalException
 from pathlib import Path
@@ -37,6 +38,9 @@ from botocore.exceptions import (
 from pydantic import TypeAdapter, ValidationError
 
 from src.schemas import ConsultaLecturas, LecturaBase, LecturaEntrada
+from src.nosql_access import (
+    AccesoDenegado, AuditoriaInvalida, Principal, autorizar, cargar_principal, sanear_evento,
+)
 
 METRICAS = ("cpu", "memoria", "disco_libre", "latencia", "tasa_error")
 ALERT_SHARDS = 4
@@ -66,10 +70,6 @@ class DocumentoDemasiadoGrande(DocumentoInvalido):
 
 class VersionDesconocida(DocumentoInvalido):
     """Versión de lectura que este cliente no sabe interpretar."""
-
-
-class AuditoriaInvalida(DocumentoInvalido):
-    """Registro fuera del contrato seguro de auditoría."""
 
 
 class MigracionInterrumpida(RuntimeError):
@@ -194,6 +194,28 @@ def _utc(value: str | datetime) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _acceso(coleccion, operacion, nombre=None):
+    """Autoriza antes de ejecutar; audita sin copiar argumentos ni errores del SDK."""
+    def decorate(method):
+        @wraps(method)
+        def controlled(self, *args, **kwargs):
+            self._autorizar(coleccion, operacion, nombre or method.__name__)
+            audit_sequence = self._audit_sequence
+            logged = operacion in ("put", "update", "delete") or coleccion == "auditoria"
+            try:
+                result = method(self, *args, **kwargs)
+            except Exception as exc:
+                if logged and self._audit_sequence == audit_sequence:
+                    self._registrar_intento(coleccion, operacion, nombre or method.__name__,
+                                            "rechazada", codigo_error=type(exc).__name__)
+                raise
+            if logged and self._audit_sequence == audit_sequence:
+                self._registrar_intento(coleccion, operacion, nombre or method.__name__, "ok")
+            return result
+        return controlled
+    return decorate
+
+
 class EventsStore:
     """Cliente sin conexión al importar; configuración por entorno al instanciar.
 
@@ -205,7 +227,12 @@ class EventsStore:
     """
 
     def __init__(self, table_name: str | None = None, *, resource=None, audit_table_name: str | None = None,
-                 migration_table_name: str | None = None):
+                 migration_table_name: str | None = None, principal: Principal | None = None):
+        self.principal = cargar_principal() if principal is None else principal
+        # Valida incluso el fixture antes de construir un cliente o una tabla.
+        from src.nosql_access import _validar_principal
+        _validar_principal(self.principal)
+        self._audit_sequence = 0
         self.table_name = table_name or os.getenv("DYNAMODB_TABLE", "cdrl_eventos")
         if resource is None:
             endpoint = os.getenv("DYNAMODB_ENDPOINT", "").strip()
@@ -237,6 +264,115 @@ class EventsStore:
         self.audit_table = resource.Table(self.audit_table_name)
         self.migration_table_name = migration_table_name or os.getenv("DYNAMODB_MIGRATION_TABLE", "cdrl_migracion_respaldo")
         self.migration_table = resource.Table(self.migration_table_name)
+
+    def _evento(self, coleccion, accion, operacion, resultado, *, clave=None, **fields):
+        clave = clave or f"COLECCION#{coleccion}"
+        return self.build_auditoria(dict(
+            operacion=operacion, actor=self.principal.actor, actor_rol=self.principal.rol,
+            accion=f"{coleccion}.{accion}", recurso=f"{coleccion}/{clave}",
+            entidad={"lecturas": "lectura", "alertas": "alerta", "auditoria": "auditoria",
+                     "respaldo_migracion": "respaldo"}[coleccion],
+            clave_afectada=clave, resultado=resultado, **fields))
+
+    def _registrar_intento(self, coleccion, accion, operacion, resultado, **fields):
+        return self._transact([], self._evento(coleccion, accion, operacion, resultado, **fields))
+
+    def _autorizar(self, coleccion, accion, operacion):
+        try:
+            autorizar(self.principal, coleccion, accion)
+        except AccesoDenegado:
+            try:
+                self._registrar_intento(coleccion, accion, operacion, "denegada")
+            except (BotoCoreError, ClientError, AuditoriaInvalida):
+                # La caída de la bitácora nunca habilita el acceso denegado.
+                pass
+            raise
+
+    def _auditoria_interna(self, fields):
+        """Completa eventos de negocio con la identidad de la sesión."""
+        fields = dict(fields)
+        operation = fields["operacion"]
+        collection, action = {
+            "actualizar_estado_alerta": ("alertas", "update"),
+            "delete_alerta": ("alertas", "delete"),
+            "migrar_lecturas": ("lecturas", "update"),
+            "revertir_migracion": ("lecturas", "put"),
+            "backfill_gsi2": ("lecturas", "update"),
+        }[operation]
+        fields.update(actor=self.principal.actor, actor_rol=self.principal.rol,
+                      accion=f"{collection}.{action}", recurso=f"{collection}/{fields['clave_afectada']}")
+        return self.build_auditoria(fields)
+
+    @_acceso("lecturas", "put", "put_lectura")
+    def put_documento_lectura(self, item: dict, *, capacidad="TOTAL") -> dict:
+        """Restaura el documento original (v1/v2), sin upcast al persistir."""
+        normalizar_lectura(item)
+        expected = self.build_lectura(int(item["lectura_id"]), {
+            name: item[name] for name in ("equipo_codigo", "metrica", "unidad", "valor", "medido_en")})
+        if any(item.get(name) != expected[name] for name in ("PK", "SK", "entidad")):
+            raise DocumentoInvalido("Identidad de lectura inconsistente.")
+        _validate_item_size(item)
+        return _write(self.table.put_item, Item=item, ConditionExpression="attribute_not_exists(PK)",
+                      ReturnConsumedCapacity=capacidad)
+
+    @_acceso("lecturas", "put", "put_lectura")
+    def put_lote_lecturas(self, items: list[dict]) -> None:
+        """Benchmark local: lote aislado, sin condiciones; nunca habilitado en AWS."""
+        if (os.getenv("DYNAMODB_LOCAL", "false").lower() not in ("true", "1")
+                or urlsplit(self.resource.meta.client.meta.endpoint_url).hostname
+                not in ("localhost", "127.0.0.1", "::1", "dynamodb")):
+            raise AccesoDenegado("Los lotes sin condiciones solo están permitidos en local.")
+        if not 1 <= len(items) <= 25:
+            raise DocumentoInvalido("El lote requiere entre 1 y 25 lecturas.")
+        for item in items:
+            normalizar_lectura(item)
+            self._clave_lectura({name: item[name] for name in ("PK", "SK")})
+            if item.get("entidad") != "lectura":
+                raise DocumentoInvalido("El lote solo admite lecturas.")
+            _validate_item_size(item)
+        with self.table.batch_writer() as batch:
+            for item in items:
+                batch.put_item(Item=item)
+        for item in items:
+            self._registrar_intento("lecturas", "put", "put_lectura", "ok", clave=item["PK"])
+
+    @staticmethod
+    def _clave_lectura(key):
+        if (not isinstance(key, dict) or set(key) != {"PK", "SK"}
+                or not isinstance(key["PK"], str)
+                or re.fullmatch(r"EQ#[A-Za-z0-9_-]{1,64}#(?:" + "|".join(METRICAS) + ")", key["PK"]) is None
+                or not isinstance(key["SK"], str)
+                or re.fullmatch(r"TS#.+#[0-9]{19}", key["SK"]) is None):
+            raise DocumentoInvalido("Clave fuera de la colección lecturas.")
+        return key
+
+    @_acceso("lecturas", "get", "get_lectura")
+    def get_documento_lectura(self, key: dict) -> dict | None:
+        return self.table.get_item(Key=self._clave_lectura(key), ConsistentRead=True).get("Item")
+
+    @_acceso("lecturas", "query", "query_lecturas")
+    def query_documentos_lectura(self, equipo: str, metrica: str, *, cursor=None, limite=25) -> dict:
+        """Página cruda para respaldos, conservando la versión persistida."""
+        query = ConsultaLecturas(equipo=equipo, metrica=metrica, limite=limite)
+        if query.metrica is None:
+            raise DocumentoInvalido("La consulta requiere una métrica.")
+        arguments = dict(KeyConditionExpression=Key("PK").eq(f"EQ#{query.equipo}#{query.metrica}"),
+                         ConsistentRead=True, Limit=query.limite)
+        if cursor:
+            arguments["ExclusiveStartKey"] = self._clave_lectura(cursor)
+        return self.table.query(**arguments)
+
+    @_acceso("lecturas", "delete", "falla_controlada")
+    def delete_lectura(self, key: dict) -> dict:
+        return self.table.delete_item(Key=self._clave_lectura(key), ConditionExpression="attribute_exists(PK)")
+
+    @_acceso("lecturas", "scan", "migrar_lecturas")
+    def scan_lecturas(self, **arguments) -> dict:
+        """Solo migración; el filtro de colección no lo puede sustituir quien llama."""
+        condition = Attr("PK").begins_with("EQ#")
+        previous = arguments.pop("FilterExpression", None)
+        arguments["FilterExpression"] = condition if previous is None else condition & previous
+        return self.table.scan(**arguments)
 
     def ensure_table(self) -> dict:
         """Crea/compara eventos, auditoría y respaldo contra sus declaraciones."""
@@ -348,6 +484,7 @@ class EventsStore:
         _validate_item_size(item)
         return item
 
+    @_acceso("lecturas", "put")
     def put_lectura(self, lectura_id: int, lectura: LecturaEntrada | dict, *, payload: str | None = None, fuente: str = "api") -> dict:
         return _write(self.table.put_item,
             Item=self.build_lectura(lectura_id, lectura, payload=payload, fuente=fuente),
@@ -371,7 +508,7 @@ class EventsStore:
                       motivo="m07_v1_a_v2", resultado="rechazada" if errores else "ok")
         if errores:
             fields["codigo_error"] = errores[0]["codigo_error"]
-        self.registrar_auditoria(**fields)
+        self._registrar_auditoria(**fields)
 
     @staticmethod
     def _condicion_cancelada(exc: ClientError) -> bool:
@@ -381,6 +518,8 @@ class EventsStore:
 
     def _migrar_documento(self, item: dict) -> None:
         """Respaldo y cambio se confirman juntos; nunca guardar una copia posterior."""
+        self._autorizar("respaldo_migracion", "put", "migrar_lecturas")
+        self._autorizar("lecturas", "update", "migrar_lecturas")
         if any(name in item for name in ("fuente", "registrado_en", "migracion_id")):
             raise DocumentoInvalido("La v1 contiene campos reservados de migración.")
         now = _utc(datetime.now(timezone.utc))
@@ -395,6 +534,7 @@ class EventsStore:
                             ExpressionAttributeValues={":v": 2, ":f": "migrada", ":t": now, ":id": MIGRACION_ID})},
         ], ReturnConsumedCapacity="TOTAL")
 
+    @_acceso("lecturas", "scan", "migrar_lecturas")
     def migrar_lecturas_v1(self, lote: int = 25, detener_tras: int | None = None, *, dry_run: bool = False) -> dict:
         """ADR-007: Scan paginado fuera de la API; reanudar ejecutando otra vez.
 
@@ -409,11 +549,10 @@ class EventsStore:
         if type(dry_run) is not bool:
             raise ValueError("dry_run debe ser booleano.")
         report, started = self._reporte_migracion(), time.perf_counter()
-        arguments = dict(FilterExpression="#entidad = :lectura", ExpressionAttributeNames={"#entidad": "entidad"},
-                         ExpressionAttributeValues={":lectura": "lectura"}, Limit=lote, ConsistentRead=True)
+        arguments = dict(FilterExpression=Attr("entidad").eq("lectura"), Limit=lote, ConsistentRead=True)
         try:
             while True:
-                page = self.table.scan(**arguments)
+                page = self.scan_lecturas(**arguments)
                 changed, error_start = 0, len(report["errores"])
                 try:
                     for item in page["Items"]:
@@ -434,8 +573,7 @@ class EventsStore:
                             self._migrar_documento(item)
                         except ClientError as exc:
                             if self._condicion_cancelada(exc):
-                                current = self.table.get_item(
-                                    Key={name: item[name] for name in ("PK", "SK")}, ConsistentRead=True).get("Item")
+                                current = self.get_documento_lectura({name: item[name] for name in ("PK", "SK")})
                                 if current is not None and current.get("schemaVersion") == 2 and not isinstance(current["schemaVersion"], bool):
                                     report["ya_v2"] += 1
                                     report["omitidas"] += 1
@@ -467,8 +605,11 @@ class EventsStore:
         finally:
             report["duracion_ms"] = round((time.perf_counter() - started) * 1000, 3)
 
+    @_acceso("respaldo_migracion", "query", "revertir_migracion")
     def revertir_migracion(self, migracion_id: str, lote: int = 25) -> dict:
         """Restaura copias exactas solo con la marca propia; conserva conflictos."""
+        self._autorizar("lecturas", "put", "revertir_migracion")
+        self._autorizar("respaldo_migracion", "delete", "revertir_migracion")
         if migracion_id != MIGRACION_ID:
             raise ValueError("migracion_id no soportado.")
         if type(lote) is not int or lote < 1:
@@ -551,6 +692,7 @@ class EventsStore:
         _validate_item_size(item)
         return item
 
+    @_acceso("alertas", "put")
     def put_alerta(self, *, lectura_id: int, umbral_id: int, estado: str, severidad: str,
                    medido_en: str | datetime, cerrada_en: str | datetime | None = None) -> dict:
         return _write(self.table.put_item,
@@ -559,6 +701,7 @@ class EventsStore:
             ConditionExpression="attribute_not_exists(PK)", ReturnConsumedCapacity="TOTAL",
         )
 
+    @_acceso("lecturas", "query")
     def query_lecturas(self, equipo_codigo: str, metrica: str, *, desde=None, hasta=None, limite: int = 100,
                        exclusive_start_key: dict | None = None, consistent_read: bool = False) -> dict:
         """Página Q1/Q3 sin Scan ni FilterExpression; conserva capacidad y cursor."""
@@ -580,6 +723,7 @@ class EventsStore:
         page["Items"] = [normalizar_lectura(item) for item in page["Items"]]
         return page
 
+    @_acceso("lecturas", "query")
     def paginar_lecturas_equipo(self, equipo_codigo: str, *, desde=None, hasta=None,
                                 limite: int = 100, cursor: str | None = None) -> dict:
         """Q5: ventana fija y continuación por SK, con un item de anticipación."""
@@ -642,14 +786,17 @@ class EventsStore:
             next_cursor = base64.urlsafe_b64encode(json.dumps(state, separators=(",", ":")).encode()).decode().rstrip("=")
         return {"items": [normalizar_lectura(item) for item in items[:query.limite]], "cursor": next_cursor}
 
+    @_acceso("lecturas", "scan", "backfill_gsi2")
     def backfill_gsi2(self, *, dry_run: bool = True) -> dict:
         """Rellena solo GSI2PK, con Scan filtrado de 25 y cambios condicionales."""
+        if not dry_run:
+            self._autorizar("lecturas", "update", "backfill_gsi2")
         report = dict(escaneadas=0, actualizadas=0, ya_indexadas=0, fallidas=0)
         arguments = dict(Limit=25, FilterExpression=Attr("PK").begins_with("EQ#")
                          & Attr("GSI2PK").not_exists())
         while True:
             try:
-                page = self.table.scan(**arguments)
+                page = self.scan_lecturas(**arguments)
             except (BotoCoreError, ClientError) as exc:
                 exc.reporte = dict(report, fallidas=report["fallidas"] + 1)
                 raise
@@ -683,7 +830,7 @@ class EventsStore:
                 if errors:
                     fields["codigo_error"] = errors[0]
                 try:
-                    self.registrar_auditoria(**fields)
+                    self._registrar_auditoria(**fields)
                 except (BotoCoreError, ClientError) as exc:
                     exc.reporte = dict(report, fallidas=report["fallidas"] + 1)
                     raise
@@ -691,6 +838,7 @@ class EventsStore:
                 return report
             arguments["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
+    @_acceso("lecturas", "query", "query_lecturas")
     def iter_lecturas(self, equipo_codigo: str, metrica: str, *, desde=None, hasta=None,
                       limite: int = 100, consistent_read: bool = False) -> Iterator[dict]:
         """Recorre todas las páginas de una ventana para agregar Q2 en el cliente."""
@@ -703,6 +851,7 @@ class EventsStore:
             if not cursor:
                 return
 
+    @_acceso("lecturas", "query")
     def ultimas_lecturas(self, equipo_codigo: str, *, metrica: str | None = None, desde=None,
                          hasta=None, limite: int = 100, consistent_read: bool = False) -> list[dict]:
         """Últimas N globales; fan-out fijo de cinco métricas si se omite el filtro.
@@ -731,6 +880,7 @@ class EventsStore:
         items = [item for metric in METRICAS for item in latest(metric)]
         return sorted(items, key=lambda item: item["SK"], reverse=True)[:query.limite]
 
+    @_acceso("alertas", "query")
     def query_alertas(self, estado: str, shard: int, *, limite: int = 100,
                       exclusive_start_key: dict | None = None) -> dict:
         """Página de un shard del GSI; siempre eventualmente consistente."""
@@ -744,6 +894,7 @@ class EventsStore:
             arguments["ExclusiveStartKey"] = exclusive_start_key
         return self.table.query(**arguments)
 
+    @_acceso("lecturas", "get")
     def get_lectura(self, equipo_codigo: str, metrica: str, medido_en: str | datetime,
                     lectura_id: int, *, consistent_read: bool = True) -> dict | None:
         """Lectura por clave completa; no existe una búsqueda por id solo."""
@@ -765,7 +916,7 @@ class EventsStore:
         fields = json.loads(AUDIT_PATH.read_text(encoding="utf-8"))["fields"]
         if not isinstance(registro, dict):
             raise AuditoriaInvalida("La auditoría requiere un documento.")
-        item = dict(registro)
+        item = sanear_evento(registro)
         allowed = set(fields["required"] + fields["optional"])
         if set(item) - allowed:
             raise AuditoriaInvalida("Campo fuera de la lista blanca.")
@@ -775,7 +926,7 @@ class EventsStore:
         if (isinstance(item["schemaVersion"], bool)
                 or not isinstance(item["schemaVersion"], (int, Decimal)) or item["schemaVersion"] != 1):
             raise AuditoriaInvalida("schemaVersion de auditoría debe ser 1.")
-        for name in fields["required"]:
+        for name in fields["required"] + ["actor", "accion", "recurso"]:
             if name not in ("PK", "SK") and name not in item:
                 raise AuditoriaInvalida(f"Falta {name}.")
         for name, choices in fields["enums"].items():
@@ -798,22 +949,37 @@ class EventsStore:
         if any(name in item and item[name] != value for name, value in keys.items()):
             raise AuditoriaInvalida("Claves de auditoría inconsistentes.")
         item.update(keys)
-        is_alert = item["operacion"] in ("actualizar_estado_alerta", "delete_alerta")
-        if (item["entidad"] != ("alerta" if is_alert else "lote_lecturas")
-                or not item["clave_afectada"].startswith("LECTURA#" if is_alert else "LOTE#")):
-            raise AuditoriaInvalida("Operación, entidad y clave incompatibles.")
+        collection = item["accion"].split(".")[0]
+        entities = {"lecturas": ("lectura", "lote_lecturas"), "alertas": ("alerta",),
+                    "auditoria": ("auditoria",), "respaldo_migracion": ("respaldo",)}
+        prefixes = {"lecturas": ("EQ#", "LOTE#"), "alertas": ("LECTURA#",),
+                    "auditoria": ("AUD#",), "respaldo_migracion": ("MIG#",)}
+        key = item["clave_afectada"]
+        if (item["entidad"] not in entities[collection]
+                or item["recurso"] != f"{collection}/{key}"
+                or not (key == f"COLECCION#{collection}" or key.startswith(prefixes[collection]))):
+            raise AuditoriaInvalida("Acción, entidad y recurso incompatibles.")
+        try:
+            Principal(item["actor"], item["actor_rol"])
+        except AccesoDenegado as exc:
+            raise AuditoriaInvalida("Actor o rol inválido para auditoría.") from exc
         return item
 
     def _audit_writes(self, item: dict) -> list[dict]:
         identity = f"OP#{item['operacion_id']}"
+        # La guarda de idempotencia no entra al índice de eventos AUD_CLAVE.
+        guard = {name: item[name] for name in ("operacion_id", "actor", "accion", "recurso", "resultado")}
+        guard.update(PK=identity, SK=identity)
         return [{"Put": {"TableName": self.audit_table_name, "Item": record,
                           "ConditionExpression": "attribute_not_exists(PK)"}}
-                for record in ({"PK": identity, "SK": identity, "operacion_id": item["operacion_id"]}, item)]
+                for record in (guard, item)]
 
     def _transact(self, changes: list[dict], audit: dict) -> dict:
         try:
-            return self.resource.meta.client.transact_write_items(
+            result = self.resource.meta.client.transact_write_items(
                 TransactItems=self._audit_writes(audit) + changes, ReturnConsumedCapacity="TOTAL")
+            self._audit_sequence += 1
+            return result
         except ClientError as exc:
             reasons = exc.response.get("CancellationReasons", [])
             if (exc.response["Error"]["Code"] == "TransactionCanceledException"
@@ -823,16 +989,23 @@ class EventsStore:
             raise
 
     def registrar_auditoria(self, registro: dict | None = None, **fields) -> dict:
+        """El anexo es interno: ningún rol tiene put directo en auditoría."""
+        self._autorizar("auditoria", "put", "query_auditoria")
+        raise AccesoDenegado("El anexo de auditoría es interno.")
+
+    def _registrar_auditoria(self, registro: dict | None = None, **fields) -> dict:
         if registro is not None and fields:
             raise AuditoriaInvalida("Usa un documento o campos, sin combinarlos.")
-        return self._transact([], self.build_auditoria(fields if registro is None else registro))
+        return self._transact([], self._auditoria_interna(fields if registro is None else registro))
 
+    @_acceso("auditoria", "query", "query_auditoria")
     def query_auditoria_dia(self, dia: str, *, limite: int = 100, exclusive_start_key=None) -> dict:
         if not isinstance(dia, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", dia) is None:
             raise AuditoriaInvalida("día inválido.")
         datetime.strptime(dia, "%Y-%m-%d")
         return self._query_auditoria(Key("PK").eq(f"AUD#{dia}"), limite, exclusive_start_key)
 
+    @_acceso("auditoria", "query", "query_auditoria")
     def query_auditoria_clave(self, clave_afectada: str, *, limite: int = 100, exclusive_start_key=None) -> dict:
         pattern = json.loads(AUDIT_PATH.read_text(encoding="utf-8"))["fields"]["patterns"]["clave_afectada"]
         if not isinstance(clave_afectada, str) or re.fullmatch(pattern, clave_afectada) is None:
@@ -851,6 +1024,7 @@ class EventsStore:
             arguments["ExclusiveStartKey"] = cursor
         return self.audit_table.query(**arguments)
 
+    @_acceso("alertas", "get")
     def get_alerta(self, lectura_id: int, umbral_id: int, *, consistent_read: bool = True) -> dict | None:
         """Item o None; lectura fuerte por identidad para reevaluar alertas Q4."""
         return self.table.get_item(Key=self._alerta_key(lectura_id, umbral_id),
@@ -874,20 +1048,21 @@ class EventsStore:
             if item[field] != expected[field] or (type(item[field]) is bool and not isinstance(expected[field], bool)):
                 raise DocumentoInvalido(f"{field} no coincide con el contrato/identidad de la alerta.")
 
+    @_acceso("alertas", "update", "actualizar_estado_alerta")
     def actualizar_estado_alerta(self, lectura_id: int, umbral_id: int, estado: str,
                                  *, cerrada_en: str | datetime | None = None,
-                                 actor_rol: str = "cdrl_ops", operacion_id: str | None = None) -> dict:
+                                 operacion_id: str | None = None) -> dict:
         """CAS atómico; estado repetido conserva el documento sin escribir."""
         key = self._alerta_key(lectura_id, umbral_id)
         if not isinstance(estado, str) or estado not in _ESTADOS:
             raise DocumentoInvalido("estado debe ser abierta, reconocida o cerrada.")
         if cerrada_en is not None and estado != "cerrada":
             raise DocumentoInvalido("cerrada_en solo es válida al solicitar estado cerrada.")
-        audit_fields = dict(operacion="actualizar_estado_alerta", actor_rol=actor_rol,
+        audit_fields = dict(operacion="actualizar_estado_alerta",
                             entidad="alerta", clave_afectada=f"{key['PK']}#{key['SK']}", resultado="ok")
         if operacion_id is not None:
             audit_fields["operacion_id"] = operacion_id
-        audit_base = self.build_auditoria(audit_fields)
+        audit_base = self._auditoria_interna(audit_fields)
         closure = _utc(cerrada_en) if cerrada_en is not None else None
         current = self.get_alerta(lectura_id, umbral_id, consistent_read=True)
         for attempt in range(3):
@@ -898,7 +1073,7 @@ class EventsStore:
             if previous == estado:
                 return current
             if estado not in _TRANSICIONES[previous]:
-                self.registrar_auditoria(dict(audit_base, resultado="rechazada",
+                self._registrar_auditoria(dict(audit_base, resultado="rechazada",
                     codigo_error="TransicionAlertaInvalida", estado_anterior=previous, estado_nuevo=estado))
                 raise TransicionAlertaInvalida(f"Transición de alerta inválida: {previous} → {estado}.")
             if estado == "cerrada" and closure is None:
@@ -932,20 +1107,21 @@ class EventsStore:
         if current["estado"] == estado:
             return current
         if estado not in _TRANSICIONES[current["estado"]]:
-            self.registrar_auditoria(dict(audit_base, resultado="rechazada",
+            self._registrar_auditoria(dict(audit_base, resultado="rechazada",
                 codigo_error="TransicionAlertaInvalida", estado_anterior=current["estado"], estado_nuevo=estado))
             raise TransicionAlertaInvalida(f"Transición de alerta inválida: {current['estado']} → {estado}.")
         raise ConflictoAlerta("La alerta cambió durante tres intentos condicionales; reintenta la operación.")
 
-    def delete_alerta(self, lectura_id: int, umbral_id: int, *, actor_rol: str = "cdrl_ops",
+    @_acceso("alertas", "delete")
+    def delete_alerta(self, lectura_id: int, umbral_id: int, *,
                       operacion_id: str | None = None) -> bool:
         """Baja y auditoría atómicas; ausencia no genera registro."""
         key = self._alerta_key(lectura_id, umbral_id)
-        fields = dict(operacion="delete_alerta", actor_rol=actor_rol, entidad="alerta",
+        fields = dict(operacion="delete_alerta", entidad="alerta",
                       clave_afectada=f"{key['PK']}#{key['SK']}", resultado="ok")
         if operacion_id is not None:
             fields["operacion_id"] = operacion_id
-        audit = self.build_auditoria(fields)
+        audit = self._auditoria_interna(fields)
         try:
             self._transact([{"Delete": dict(TableName=self.table_name, Key=key,
                 ConditionExpression="attribute_exists(PK)")}], audit)
