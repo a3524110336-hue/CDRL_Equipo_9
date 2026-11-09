@@ -1,0 +1,44 @@
+{
+  "assignmentId": "m09-nosql-security",
+  "commitSha": "PENDIENTE_SHA_DEL_TAG_week-10-final",
+  "tag": "week-10-final",
+  "verificationRun": "PENDIENTE_URL_DE_GITHUB_ACTIONS",
+  "commands": [
+    "python -m pytest tests/test_m09_security.py -v",
+    "python scripts/build_m09_artifact.py",
+    "make verify"
+  ],
+  "results": {
+    "artifact": "artifacts/m09-nosql-security.json",
+    "adr": "docs/ADR-009-seguridad-nosql-auditoria.md",
+    "pruebas": {
+      "total": 9,
+      "casos": ["M09-N1", "M09-L1", "M09-L2", "M09-F1", "M09-R1", "M09-M1"],
+      "normal": "cdrl_ops reconoce una alerta y el evento trae actor, accion, recurso y resultado",
+      "limite_1": "permiso en la coleccion pero no en la operacion: AccesoDenegado, tabla intacta y evento denegada",
+      "limite_2": "lectura cruzada, scan y principales sin rol, con rol inventado o con actor ajeno: todo negado",
+      "fallo_declarado": "un secreto (AKIA, cadena de conexion, bearer, password) lanza AuditoriaInvalida y no se escribe",
+      "remediacion": "el rol autodeclarado ya no borra: delete_alerta no recibe actor_rol y el rol sale del principal autenticado"
+    },
+    "matriz": {
+      "celdas": 216,
+      "discrepancias": 0,
+      "descripcion": "cada celda actor x coleccion x operacion con lo esperado contra lo obtenido"
+    },
+    "auditoria": {
+      "campos_obligatorios": ["actor", "accion", "recurso", "resultado"],
+      "resultados": ["ok", "rechazada", "denegada"],
+      "barrido_secretos": "toda la tabla de auditoria revisada, 0 coincidencias"
+    }
+  },
+  "assumptions": [
+    "Los fixtures son sinteticos; los actores son ids sinteticos (svc-api, ops-01, aud-01), nunca nombres ni correos.",
+    "El oraculo de la matriz esta escrito en las pruebas, independiente de db/nosql/access-policy.json.",
+    "Las pruebas corren contra DynamoDB Local con tablas aisladas por corrida."
+  ],
+  "limitations": [
+    "DynamoDB Local no aplica IAM y el Learner Lab solo da LabRole: lo que se prueba de verdad es el control en el codigo (src/nosql_access.py); las politicas de db/nosql/iam/ no se ejercitan contra AWS.",
+    "El barrido de secretos usa patrones conocidos (AKIA, cadenas de conexion, bearer, password, secret, token) y no detecta cualquier secreto posible.",
+    "Las lecturas permitidas sobre lecturas y alertas no se auditan, por volumen (ADR-009)."
+  ]
+}

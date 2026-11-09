@@ -16,6 +16,7 @@ required_files=(
   "evidence/m06-evolution-recovery.json"
   "evidence/m07-document-evolution.json"
   "evidence/m08-pagination-performance.json"
+  "evidence/m09-nosql-security.json"
 )
 
 for required in "${required_files[@]}"; do
@@ -27,7 +28,7 @@ import json
 from pathlib import Path
 
 required = {"assignmentId", "commitSha", "commands", "results", "assumptions", "limitations"}
-for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json", "evidence/m06-evolution-recovery.json", "evidence/m07-document-evolution.json", "evidence/m08-pagination-performance.json"):
+for name in ("evidence/m03-least-privilege.json", "evidence/m04-nosql-decision.json", "evidence/m05-document-store.json", "evidence/m06-evolution-recovery.json", "evidence/m07-document-evolution.json", "evidence/m08-pagination-performance.json", "evidence/m09-nosql-security.json"):
     payload = json.loads(Path(name).read_text(encoding="utf-8"))
     missing = sorted(required.difference(payload))
     if missing:
@@ -129,6 +130,9 @@ $PYTHON_RUN scripts/build_m07_artifact.py
 
 # M08: reporte por caso, paginacion estable y benchmark contra la linea base.
 $PYTHON_RUN scripts/build_m08_artifact.py
+
+# M09: reporte por caso, matriz de acceso esperado contra obtenido y barrido de secretos.  # <-- M09
+$PYTHON_RUN scripts/build_m09_artifact.py                                                  # <-- M09
 
 python3 - <<'PY'
 import json

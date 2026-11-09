@@ -1,0 +1,1811 @@
+{
+  "schema": "m09-nosql-security/1",
+  "generated_at": "2026-11-09T01:03:37.612260+00:00",
+  "synthetic_fixtures": true,
+  "source": "tests/test_m09_security.py contra DynamoDB Local (docker-compose.yml)",
+  "adr": "docs/ADR-009-seguridad-nosql-auditoria.md",
+  "pytest": {
+    "total": 9,
+    "failures": 0,
+    "errors": 0,
+    "exit_code": 0
+  },
+  "casos": [
+    {
+      "id": "M09-N1",
+      "prueba": "test_normal",
+      "criterio": "normal: cdrl_ops reconoce una alerta y el evento trae actor, accion, recurso y resultado",
+      "pruebas_ejecutadas": 1,
+      "resultado": "ok"
+    },
+    {
+      "id": "M09-L1",
+      "prueba": "test_limite_1",
+      "criterio": "limite 1: permiso en la coleccion pero no en la operacion; tabla intacta y evento denegada",
+      "pruebas_ejecutadas": 1,
+      "resultado": "ok"
+    },
+    {
+      "id": "M09-L2",
+      "prueba": "test_limite_2",
+      "criterio": "limite 2: lectura cruzada, scan y principales sin rol o con rol inventado; todo negado",
+      "pruebas_ejecutadas": 1,
+      "resultado": "ok"
+    },
+    {
+      "id": "M09-F1",
+      "prueba": "test_fallo_declarado",
+      "criterio": "fallo declarado: un secreto no entra a la auditoria (AuditoriaInvalida) y el barrido no encuentra coincidencias",
+      "pruebas_ejecutadas": 4,
+      "resultado": "ok"
+    },
+    {
+      "id": "M09-R1",
+      "prueba": "test_regresion",
+      "criterio": "remediacion: el rol autodeclarado ya no borra ni queda auditado como ok",
+      "pruebas_ejecutadas": 1,
+      "resultado": "ok"
+    },
+    {
+      "id": "M09-M1",
+      "prueba": "test_matriz_completa",
+      "criterio": "matriz completa: cada celda rol x coleccion x operacion, esperado contra obtenido",
+      "pruebas_ejecutadas": 1,
+      "resultado": "ok"
+    }
+  ],
+  "matriz": [
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-api",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "svc-carga",
+      "rol": "cdrl_writer",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-01",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "ops-02",
+      "rol": "cdrl_ops",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "aud-01",
+      "rol": "cdrl_auditor",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-migracion",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-backfill",
+      "rol": "migracion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-recuperacion",
+      "rol": "recuperacion",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "delete",
+      "esperado": true,
+      "obtenido": true
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "lecturas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "alertas",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "auditoria",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "get",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "query",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "put",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "update",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "delete",
+      "esperado": false,
+      "obtenido": false
+    },
+    {
+      "actor": "job-simulacro",
+      "rol": "simulacro",
+      "coleccion": "respaldo_migracion",
+      "operacion": "scan",
+      "esperado": false,
+      "obtenido": false
+    }
+  ],
+  "matriz_resumen": {
+    "celdas": 216,
+    "discrepancias": 0
+  },
+  "eventos_por_resultado": {
+    "ok": 8,
+    "denegada": 9,
+    "rechazada": 1
+  },
+  "barrido_secretos": {
+    "eventos_revisados": 18,
+    "coincidencias": 0,
+    "patron": "AKIA[0-9A-Z]{16}|://[^\\s/:]+:[^\\s@]+@|password\\s*=|bearer\\s+|secret|token"
+  },
+  "coverage": {
+    "M09-N1": true,
+    "M09-L1": true,
+    "M09-L2": true,
+    "M09-F1": true,
+    "M09-R1": true,
+    "M09-M1": true
+  },
+  "auditoria_ok": true,
+  "all_required_cases_passed": true
+}
