@@ -23,6 +23,7 @@ os.environ.setdefault("AWS_REGION", "us-east-1")
 os.environ.setdefault("DYNAMODB_LOCAL", "true")
 
 from src.events_store import CursorInvalido, EventsStore, METRICAS
+from src.nosql_access import Principal
 
 N = 1000
 LIMITE = 100
@@ -78,6 +79,7 @@ def store():
         table_name=f"m08_eventos_{corrida}",
         audit_table_name=f"m08_auditoria_{corrida}",
         migration_table_name=f"m08_respaldo_{corrida}",
+        principal=Principal("job-backfill", "migracion"),
     )
     s.ensure_table()
     yield s

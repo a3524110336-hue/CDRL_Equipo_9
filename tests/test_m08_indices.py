@@ -19,6 +19,7 @@ os.environ.setdefault("AWS_REGION", "us-east-1")
 os.environ.setdefault("DYNAMODB_LOCAL", "true")
 
 from src.events_store import EventsStore
+from src.nosql_access import Principal
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEXES = json.loads((ROOT / "db" / "nosql" / "indexes.json").read_text(encoding="utf-8"))
@@ -28,10 +29,21 @@ EQUIPO = "fixture-m08-indices"
 @pytest.fixture(scope="module")
 def store():
     table_name = f"cdrl_eventos_test_m08_{uuid.uuid4().hex[:8]}"
-    s = EventsStore(table_name=table_name)
+    s = EventsStore(table_name=table_name, audit_table_name=f"{table_name}_aud",
+                    migration_table_name=f"{table_name}_resp",
+                    principal=Principal("ops-01", "cdrl_ops"))
     s.ensure_table()
     yield s
-    s.resource.meta.client.delete_table(TableName=table_name)
+    for nombre in (s.table_name, s.audit_table_name, s.migration_table_name):
+        s.resource.meta.client.delete_table(TableName=nombre)
+
+
+@pytest.fixture(scope="module")
+def writer(store):
+    return EventsStore(table_name=store.table_name, resource=store.resource,
+                       audit_table_name=store.audit_table_name,
+                       migration_table_name=store.migration_table_name,
+                       principal=Principal("svc-api", "cdrl_writer"))
 
 
 def _con_gsi2(store, item):
@@ -52,7 +64,7 @@ def test_m08_gsi2_declarado_y_activo(store):
     assert gsi2["Projection"]["ProjectionType"] == "ALL"
 
 
-def test_m08_gsi2_ordena_igual_que_la_tabla_y_deja_fuera_las_alertas(store):
+def test_m08_gsi2_ordena_igual_que_la_tabla_y_deja_fuera_las_alertas(store, writer):
     lecturas = [
         (801, "cpu", "2026-11-01T10:00:00Z"),
         (802, "memoria", "2026-11-01T10:00:00Z"),
@@ -64,12 +76,12 @@ def test_m08_gsi2_ordena_igual_que_la_tabla_y_deja_fuera_las_alertas(store):
                 "latencia": "milisegundos", "tasa_error": "proporcion"}
     esperadas = []
     for lectura_id, metrica, medido_en in lecturas:
-        store.put_lectura(lectura_id, {"equipo_codigo": EQUIPO, "metrica": metrica, "unidad": unidades[metrica],
+        writer.put_lectura(lectura_id, {"equipo_codigo": EQUIPO, "metrica": metrica, "unidad": unidades[metrica],
                                        "valor": 0.5, "medido_en": medido_en})
         item = store.get_lectura(EQUIPO, metrica, medido_en, lectura_id)
         _con_gsi2(store, item)
         esperadas.append(item["SK"])
-    store.put_alerta(lectura_id=803, umbral_id=1, estado="abierta", severidad="advertencia",
+    writer.put_alerta(lectura_id=803, umbral_id=1, estado="abierta", severidad="advertencia",
                      medido_en="2026-11-01T11:30:00Z")
 
     pagina = store.table.query(IndexName="GSI2", KeyConditionExpression=Key("GSI2PK").eq(f"EQ#{EQUIPO}"),

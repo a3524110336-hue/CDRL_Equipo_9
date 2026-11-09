@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 os.environ.setdefault("DYNAMODB_ENDPOINT", f"http://localhost:{os.environ.get('DYNAMODB_PORT', '8000')}")
@@ -29,6 +30,7 @@ from src.events_store import (
     VersionDesconocida,
     normalizar_lectura,
 )
+from src.nosql_access import Principal
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "db" / "nosql" / "audit-table.json"
@@ -73,13 +75,15 @@ def _volcar_reporte():
 
 def _nuevo_store(prefijo):
     sufijo = uuid.uuid4().hex[:8]
-    s = EventsStore(table_name=f"{prefijo}_{sufijo}", audit_table_name=f"{prefijo}_aud_{sufijo}")
+    s = EventsStore(table_name=f"{prefijo}_{sufijo}", audit_table_name=f"{prefijo}_aud_{sufijo}",
+                    migration_table_name=f"{prefijo}_respaldo_{sufijo}",
+                    principal=Principal("job-recuperacion", "recuperacion"))
     s.ensure_table()
     return s
 
 
 def _borrar(s):
-    for nombre in (s.table_name, s.audit_table_name):
+    for nombre in (s.table_name, s.audit_table_name, s.migration_table_name):
         s.resource.meta.client.delete_table(TableName=nombre)
 
 
@@ -88,6 +92,23 @@ def store():
     s = _nuevo_store("cdrl_eventos_test_m06")
     yield s
     _borrar(s)
+
+
+def _con_principal(s, actor, rol):
+    return EventsStore(table_name=s.table_name, resource=s.resource,
+                       audit_table_name=s.audit_table_name,
+                       migration_table_name=s.migration_table_name,
+                       principal=Principal(actor, rol))
+
+
+@pytest.fixture(scope="module")
+def writer(store):
+    return _con_principal(store, "svc-api", "cdrl_writer")
+
+
+@pytest.fixture(scope="module")
+def ops(store):
+    return _con_principal(store, "ops-01", "cdrl_ops")
 
 
 @pytest.fixture(scope="module")
@@ -119,11 +140,16 @@ def _crudo(store, item):
 
 
 def _auditorias(s):
+    """Oráculo SDK: consultar la bitácora no agrega eventos a lo observado."""
     items = []
     for dia in sorted({DIA_INICIO, datetime.now(timezone.utc).date().isoformat()}):
         cursor = None
         while True:
-            pagina = s.query_auditoria_dia(dia, limite=1000, exclusive_start_key=cursor)
+            argumentos = dict(KeyConditionExpression=Key("PK").eq(f"AUD#{dia}"),
+                               ConsistentRead=True, Limit=1000)
+            if cursor:
+                argumentos["ExclusiveStartKey"] = cursor
+            pagina = s.audit_table.query(**argumentos)
             items += pagina["Items"]
             cursor = pagina.get("LastEvaluatedKey")
             if not cursor:
@@ -230,8 +256,11 @@ def test_fallo_declarado_schema_version_desconocida(store):
 
 
 def test_fallo_declarado_auditoria_con_campo_prohibido(store):
-    base = dict(operacion="falla_controlada", actor_rol="recuperacion", entidad="lote_lecturas",
-                resultado="ok", conteo=1)
+    clave = f"LOTE#{uuid.uuid4().hex}"
+    base = dict(operacion="restaurar_lecturas", actor="job-recuperacion", actor_rol="recuperacion",
+                accion="lecturas.put", recurso=f"lecturas/{clave}", entidad="lote_lecturas",
+                clave_afectada=clave, resultado="ok", conteo=1)
+    store.build_auditoria(base)
     prohibidos = [
         {"valor": 42},
         {"payload": "dato crudo"},
@@ -241,9 +270,9 @@ def test_fallo_declarado_auditoria_con_campo_prohibido(store):
     antes = len(_auditorias(store))
     codigos = []
     for extra in prohibidos:
-        registro = dict(base, clave_afectada=f"LOTE#{uuid.uuid4().hex}", **extra)
+        registro = dict(base, **extra)
         with pytest.raises(AuditoriaInvalida) as exc:
-            store.registrar_auditoria(registro)
+            store.build_auditoria(registro)
         codigos.append(type(exc.value).__name__)
     despues = len(_auditorias(store))
 
@@ -257,12 +286,12 @@ def test_fallo_declarado_auditoria_con_campo_prohibido(store):
 # Auditoria de una operacion y append-only
 # ---------------------------------------------------------------------------
 
-def test_auditoria_cambiar_alerta_deja_un_registro_sin_datos(store):
+def test_auditoria_cambiar_alerta_deja_un_registro_sin_datos(store, writer, ops):
     equipo, lectura_id, umbral_id = "fixture-m06-auditoria", 1050, 7
     store.put_lectura(lectura_id, _lectura(equipo, T0), fuente="fixture")
-    store.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
+    writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
                      severidad="advertencia", medido_en=T0)
-    store.actualizar_estado_alerta(lectura_id, umbral_id, "reconocida", operacion_id=uuid.uuid4().hex)
+    ops.actualizar_estado_alerta(lectura_id, umbral_id, "reconocida", operacion_id=uuid.uuid4().hex)
 
     clave = f"LECTURA#{lectura_id:019d}#UMBRAL#{umbral_id:019d}"
     registros = [r for r in _auditorias(store) if r.get("clave_afectada") == clave]
@@ -279,30 +308,33 @@ def test_auditoria_cambiar_alerta_deja_un_registro_sin_datos(store):
            "resultado": registro.get("resultado"),
            "sin_valor_ni_payload": "valor" not in registro and "payload" not in registro,
            "sin_endpoint": os.environ["DYNAMODB_ENDPOINT"] not in texto,
-           "estado_en_tabla": store.get_alerta(lectura_id, umbral_id)["estado"]})
+           "estado_en_tabla": ops.get_alerta(lectura_id, umbral_id)["estado"]})
 
 
-def test_auditoria_append_only_repetir_operacion_id_falla(store):
-    operacion_id, clave = uuid.uuid4().hex, f"LOTE#{uuid.uuid4().hex}"
-    base = dict(operacion="falla_controlada", actor_rol="recuperacion", entidad="lote_lecturas",
-                clave_afectada=clave, resultado="ok", conteo=1, motivo="prueba_append_only",
-                operacion_id=operacion_id)
-    store.registrar_auditoria(base)
+def test_auditoria_append_only_repetir_operacion_id_falla(store, writer, ops):
+    operacion_id = uuid.uuid4().hex
+    lectura_id, umbral_id = 1051, 8
+    writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
+                     severidad="advertencia", medido_en=T0)
+    ops.actualizar_estado_alerta(lectura_id, umbral_id, "reconocida", operacion_id=operacion_id)
+    original = next(r for r in _auditorias(store) if r["operacion_id"] == operacion_id)
 
     codigos = []
-    for extra in ({}, {"ocurrido_en": "2030-01-01T00:00:00Z"}):
+    for cierre in (T1, "2030-01-01T00:00:00Z"):
         with pytest.raises(ClientError) as exc:
-            store.registrar_auditoria(dict(base, conteo=999, **extra))
+            ops.actualizar_estado_alerta(lectura_id, umbral_id, "cerrada",
+                                         cerrada_en=cierre, operacion_id=operacion_id)
         codigos.append(exc.value.response["Error"]["Code"])
 
-    registros = [r for r in _auditorias(store) if r.get("clave_afectada") == clave]
-    en_2030 = store.query_auditoria_dia("2030-01-01")["Items"]
+    registros = [r for r in _auditorias(store) if r["operacion_id"] == operacion_id]
 
     _caso("M06-A2", "test_auditoria_append_only_repetir_operacion_id_falla",
-          "repetir un operacion_id (incluso con otra fecha) falla y no sobrescribe",
-          {"codigos": ["ConditionalCheckFailedException"] * 2, "registros": 1, "conteo_original": 1, "en_otra_fecha": 0},
+          "repetir un operacion_id con otra fecha de cierre falla sin sobrescribir auditoria ni alerta",
+          {"codigos": ["ConditionalCheckFailedException"] * 2, "registros": 1,
+           "registro_original_intacto": True, "estado_original": "reconocida"},
           {"codigos": codigos, "registros": len(registros),
-           "conteo_original": int(registros[0]["conteo"]) if registros else None, "en_otra_fecha": len(en_2030)},
+           "registro_original_intacto": registros == [original],
+           "estado_original": ops.get_alerta(lectura_id, umbral_id)["estado"]},
           codigo_error="ConditionalCheckFailedException")
 
 
@@ -310,25 +342,37 @@ def test_auditoria_append_only_repetir_operacion_id_falla(store):
 # Recuperacion con mediciones
 # ---------------------------------------------------------------------------
 
-def test_recuperacion_recupera_fixture_y_mide(store_recuperacion, tmp_path):
+def test_recuperacion_recupera_fixture_y_mide(store_recuperacion, tmp_path, monkeypatch):
+    monkeypatch.setenv("CDRL_ENTORNO", "local")
     modulo = _cargar_recover()
     r = modulo.recover_m06(store_recuperacion, backup_dir=tmp_path)
     RECUPERACION.update({k: v for k, v in r.items() if k != "respaldo_archivo"})
 
-    lote = [a for a in _auditorias(store_recuperacion) if a.get("clave_afectada") == f"LOTE#{r['lote_id']}"]
+    eventos = _auditorias(store_recuperacion)
+    borrados = [a for a in eventos if a["operacion"] == "falla_controlada"]
+    escrituras = [a for a in eventos if a["operacion"] == "put_lectura"]
+    auditoria = {
+        "eventos": len(eventos), "borrados": len(borrados), "escrituras": len(escrituras),
+        "actor_borrados": all((a["actor"], a["actor_rol"], a["accion"]) ==
+                              ("job-simulacro", "simulacro", "lecturas.delete") for a in borrados),
+        "actor_escrituras": all((a["actor"], a["actor_rol"], a["accion"]) ==
+                                ("job-recuperacion", "recuperacion", "lecturas.put") for a in escrituras),
+        "resultados": sorted({a["resultado"] for a in eventos}),
+    }
 
     _caso("M06-R1", "test_recuperacion_recupera_fixture_y_mide",
           "el procedimiento recupera lo borrado sin pisar lo posterior y mide el resultado",
           {"esperados": 30, "restaurados": 30, "ya_existian": 0, "faltantes_tras_restaurar": 0,
            "diferencias_campo": 0, "v1_restauradas_sin_schemaVersion": 10, "posteriores_intactas": 10,
            "total_final": 130, "segunda_corrida_restaurados": 0,
-           "auditoria": ["falla_controlada", "restaurar_lecturas"]},
+           "auditoria": {"eventos": 310, "borrados": 30, "escrituras": 280,
+                         "actor_borrados": True, "actor_escrituras": True, "resultados": ["ok"]}},
           {"esperados": r["esperados"], "restaurados": r["restaurados"], "ya_existian": r["ya_existian"],
            "faltantes_tras_restaurar": r["faltantes_tras_restaurar"], "diferencias_campo": r["diferencias_campo"],
            "v1_restauradas_sin_schemaVersion": r["v1_restauradas_sin_schemaVersion"],
            "posteriores_intactas": r["posteriores_intactas"], "total_final": r["total_final"],
            "segunda_corrida_restaurados": r["segunda_corrida"]["restaurados"],
-           "auditoria": sorted(a["operacion"] for a in lote)})
+           "auditoria": auditoria})
 
 
 # ---------------------------------------------------------------------------

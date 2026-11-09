@@ -30,6 +30,7 @@ from src.events_store import (
     VersionDesconocida,
     normalizar_lectura,
 )
+from src.nosql_access import Principal
 
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "db" / "nosql" / "audit-table.json"
@@ -82,6 +83,7 @@ def store():
         table_name=f"m07_eventos_{corrida}",
         audit_table_name=f"m07_auditoria_{corrida}",
         migration_table_name=f"m07_respaldo_{corrida}",
+        principal=Principal("job-migracion", "migracion"),
     )
     s.ensure_table()
     yield s
@@ -164,11 +166,16 @@ def _difs(actual, esperado):
 
 
 def _auditorias(s):
+    # Oráculo SDK: observar la bitácora sin generar otro evento de consulta.
     items = []
     for dia in sorted({DIA_INICIO, datetime.now(timezone.utc).date().isoformat()}):
         cursor = None
         while True:
-            pagina = s.query_auditoria_dia(dia, limite=1000, exclusive_start_key=cursor)
+            argumentos = dict(KeyConditionExpression=Key("PK").eq(f"AUD#{dia}"),
+                               ConsistentRead=True, Limit=1000)
+            if cursor:
+                argumentos["ExclusiveStartKey"] = cursor
+            pagina = s.audit_table.query(**argumentos)
             items += pagina["Items"]
             cursor = pagina.get("LastEvaluatedKey")
             if not cursor:

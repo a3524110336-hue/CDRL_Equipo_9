@@ -26,6 +26,7 @@ from src.events_store import (
     MAX_ITEM_BYTES,
     estimate_item_size,
 )
+from src.nosql_access import Principal
 
 ROOT = Path(__file__).resolve().parents[1]
 INDEXES_PATH = ROOT / "db" / "nosql" / "indexes.json"
@@ -34,10 +35,21 @@ INDEXES_PATH = ROOT / "db" / "nosql" / "indexes.json"
 @pytest.fixture(scope="module")
 def store():
     table_name = f"cdrl_eventos_test_m05_{uuid.uuid4().hex[:8]}"
-    s = EventsStore(table_name=table_name)
+    s = EventsStore(table_name=table_name, audit_table_name=f"{table_name}_aud",
+                    migration_table_name=f"{table_name}_resp",
+                    principal=Principal("ops-01", "cdrl_ops"))
     s.ensure_table()
     yield s
-    s.resource.meta.client.delete_table(TableName=table_name)
+    for nombre in (s.table_name, s.audit_table_name, s.migration_table_name):
+        s.resource.meta.client.delete_table(TableName=nombre)
+
+
+@pytest.fixture(scope="module")
+def writer(store):
+    return EventsStore(table_name=store.table_name, resource=store.resource,
+                       audit_table_name=store.audit_table_name,
+                       migration_table_name=store.migration_table_name,
+                       principal=Principal("svc-api", "cdrl_writer"))
 
 
 def _lectura(equipo_codigo, lectura_id=1, metrica="cpu", unidad="porcentaje", valor=42.5,
@@ -52,17 +64,17 @@ def _lectura(equipo_codigo, lectura_id=1, metrica="cpu", unidad="porcentaje", va
 # Caso normal
 # ---------------------------------------------------------------------------
 
-def test_caso_normal_alta_lectura_alerta_cambio_estado_borrado(store):
+def test_caso_normal_alta_lectura_alerta_cambio_estado_borrado(store, writer):
     lectura_id, umbral_id = 101, 1
     lectura = _lectura("fixture-m05-normal", lectura_id)
 
-    store.put_lectura(lectura_id, lectura)
+    writer.put_lectura(lectura_id, lectura)
     guardada = store.get_lectura("fixture-m05-normal", "cpu", lectura["medido_en"], lectura_id)
     assert guardada is not None
     assert guardada["lectura_id"] == lectura_id
     assert guardada["entidad"] == "lectura"
 
-    store.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
+    writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
                       severidad="advertencia", medido_en=lectura["medido_en"])
     alerta = store.get_alerta(lectura_id, umbral_id)
     assert alerta["estado"] == "abierta"
@@ -85,7 +97,7 @@ def test_caso_normal_alta_lectura_alerta_cambio_estado_borrado(store):
 # Limite 1: documento justo en los 400 KB (409 600 bytes), medido por DynamoDB
 # ---------------------------------------------------------------------------
 
-def test_limite_item_al_filo_del_tamano_maximo(store):
+def test_limite_item_al_filo_del_tamano_maximo(store, writer):
     base = _lectura("fixture-m05-boundary", medido_en="2026-10-04T01:00:00Z")
     lectura_id_ok, lectura_id_over = 201, 202
 
@@ -98,12 +110,12 @@ def test_limite_item_al_filo_del_tamano_maximo(store):
     item_en_limite = EventsStore.build_lectura(lectura_id_ok, base, payload="x" * pad_len)
     assert estimate_item_size(item_en_limite) == MAX_ITEM_BYTES
 
-    store.put_lectura(lectura_id_ok, base, payload="x" * pad_len)
+    writer.put_lectura(lectura_id_ok, base, payload="x" * pad_len)
     guardada = store.get_lectura("fixture-m05-boundary", "cpu", base["medido_en"], lectura_id_ok)
     assert guardada is not None
 
     with pytest.raises(DocumentoDemasiadoGrande):
-        store.put_lectura(lectura_id_over, base, payload="x" * (pad_len + 1))
+        writer.put_lectura(lectura_id_over, base, payload="x" * (pad_len + 1))
     ausente = store.get_lectura("fixture-m05-boundary", "cpu", base["medido_en"], lectura_id_over)
     assert ausente is None
 
@@ -112,11 +124,11 @@ def test_limite_item_al_filo_del_tamano_maximo(store):
 # Limite 2: repetir la misma operacion (idempotencia)
 # ---------------------------------------------------------------------------
 
-def test_limite_repetir_la_misma_operacion_es_idempotente(store):
+def test_limite_repetir_la_misma_operacion_es_idempotente(store, writer):
     lectura_id, umbral_id = 301, 301
     lectura = _lectura("fixture-m05-idempotente", lectura_id, medido_en="2026-10-04T02:00:00Z")
-    store.put_lectura(lectura_id, lectura)
-    store.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
+    writer.put_lectura(lectura_id, lectura)
+    writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
                       severidad="critica", medido_en=lectura["medido_en"])
 
     primero = store.actualizar_estado_alerta(lectura_id, umbral_id, "reconocida")
@@ -136,23 +148,23 @@ def test_limite_repetir_la_misma_operacion_es_idempotente(store):
 # Duplicado: el segundo put no sobrescribe
 # ---------------------------------------------------------------------------
 
-def test_duplicado_el_segundo_put_no_sobrescribe(store):
+def test_duplicado_el_segundo_put_no_sobrescribe(store, writer):
     lectura_id = 401
     lectura = _lectura("fixture-m05-duplicado", lectura_id, valor=10.0, medido_en="2026-10-04T03:00:00Z")
-    store.put_lectura(lectura_id, lectura)
+    writer.put_lectura(lectura_id, lectura)
 
     with pytest.raises(ClientError) as exc:
-        store.put_lectura(lectura_id, lectura)
+        writer.put_lectura(lectura_id, lectura)
     assert exc.value.response["Error"]["Code"] == "ConditionalCheckFailedException"
 
     guardada = store.get_lectura("fixture-m05-duplicado", "cpu", lectura["medido_en"], lectura_id)
     assert float(guardada["valor"]) == 10.0
 
     umbral_id = 41
-    store.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
+    writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="abierta",
                       severidad="advertencia", medido_en=lectura["medido_en"])
     with pytest.raises(ClientError) as exc2:
-        store.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="reconocida",
+        writer.put_alerta(lectura_id=lectura_id, umbral_id=umbral_id, estado="reconocida",
                           severidad="critica", medido_en=lectura["medido_en"])
     assert exc2.value.response["Error"]["Code"] == "ConditionalCheckFailedException"
 
@@ -177,25 +189,25 @@ def test_ausencia_get_update_delete_de_algo_inexistente(store):
 # Fallo declarado: documento invalido rechazado sin escribir nada
 # ---------------------------------------------------------------------------
 
-def test_fallo_declarado_documento_invalido_no_escribe_nada(store):
+def test_fallo_declarado_documento_invalido_no_escribe_nada(store, writer):
     medido_en = "2026-10-04T05:00:00Z"
 
     metrica_invalida = _lectura("fixture-m05-invalida", 501, metrica="temperatura", unidad="porcentaje",
                                 medido_en=medido_en)
     with pytest.raises(DocumentoInvalido):
-        store.put_lectura(501, metrica_invalida)
+        writer.put_lectura(501, metrica_invalida)
 
     sin_zona = _lectura("fixture-m05-invalida", 502, medido_en="2026-10-04T05:00:00")
     with pytest.raises(DocumentoInvalido):
-        store.put_lectura(502, sin_zona)
+        writer.put_lectura(502, sin_zona)
 
     campo_extra = dict(_lectura("fixture-m05-invalida", 503, medido_en=medido_en), origen="x")
     with pytest.raises(DocumentoInvalido):
-        store.put_lectura(503, campo_extra)
+        writer.put_lectura(503, campo_extra)
 
     valor_fuera_rango = _lectura("fixture-m05-invalida", 504, valor=140.0, medido_en=medido_en)
     with pytest.raises(DocumentoInvalido):
-        store.put_lectura(504, valor_fuera_rango)
+        writer.put_lectura(504, valor_fuera_rango)
 
     for lectura_id in (501, 502, 503, 504):
         assert store.get_lectura("fixture-m05-invalida", "cpu", medido_en, lectura_id) is None
@@ -203,13 +215,13 @@ def test_fallo_declarado_documento_invalido_no_escribe_nada(store):
     alerta_estado_invalido = dict(lectura_id=601, umbral_id=1, estado="pendiente",
                                   severidad="advertencia", medido_en=medido_en)
     with pytest.raises(DocumentoInvalido):
-        store.put_alerta(**alerta_estado_invalido)
+        writer.put_alerta(**alerta_estado_invalido)
     assert store.get_alerta(601, 1) is None
 
     cierre_incoherente = dict(lectura_id=602, umbral_id=1, estado="cerrada",
                               severidad="critica", medido_en=medido_en)
     with pytest.raises(DocumentoInvalido):
-        store.put_alerta(**cierre_incoherente)
+        writer.put_alerta(**cierre_incoherente)
     assert store.get_alerta(602, 1) is None
 
 
@@ -217,7 +229,7 @@ def test_fallo_declarado_documento_invalido_no_escribe_nada(store):
 # Q1-Q4 van por Query a un indice declarado, nunca por Scan
 # ---------------------------------------------------------------------------
 
-def test_q1_a_q4_usan_query_a_indice_declarado_nunca_scan(store):
+def test_q1_a_q4_usan_query_a_indice_declarado_nunca_scan(store, writer):
     indexes = json.loads(INDEXES_PATH.read_text(encoding="utf-8"))
     queries = indexes["queries"]
     declarados = {"TABLE"} | {i["IndexName"] for i in indexes["table"]["GlobalSecondaryIndexes"]}
@@ -234,8 +246,8 @@ def test_q1_a_q4_usan_query_a_indice_declarado_nunca_scan(store):
     try:
         lectura_id = 701
         lectura = _lectura("fixture-m05-query", lectura_id, medido_en="2026-10-04T06:00:00Z")
-        store.put_lectura(lectura_id, lectura)
-        store.put_alerta(lectura_id=lectura_id, umbral_id=701, estado="abierta",
+        writer.put_lectura(lectura_id, lectura)
+        writer.put_alerta(lectura_id=lectura_id, umbral_id=701, estado="abierta",
                           severidad="advertencia", medido_en=lectura["medido_en"])
 
         pagina_lecturas = store.query_lecturas("fixture-m05-query", "cpu", limite=10)
