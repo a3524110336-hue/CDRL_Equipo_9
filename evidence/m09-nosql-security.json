@@ -1,8 +1,8 @@
 {
   "assignmentId": "m09-nosql-security",
-  "commitSha": "PENDIENTE_SHA_DEL_TAG_week-10-final",
+  "commitSha": "5cf20102e079aaa713f71d81fb6e3c9d7837fad2",
   "tag": "week-10-final",
-  "verificationRun": "PENDIENTE_URL_DE_GITHUB_ACTIONS",
+  "verificationRun": "https://github.com/a3524110336-hue/CDRL_Equipo_9/actions/runs/42552831834",
   "commands": [
     "python -m pytest tests/test_m09_security.py -v",
     "python scripts/build_m09_artifact.py",
